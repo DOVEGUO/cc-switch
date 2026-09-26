@@ -405,7 +405,12 @@ async fn handle_claude_transform(
     // 场景（任意上游 is_sse、非 Codex OAuth 等）仍沿用原有流式兜底。
     let aggregate_codex_oauth_responses_sse =
         !is_stream && is_codex_oauth && api_format == "openai_responses";
-    let use_streaming = if aggregate_codex_oauth_responses_sse {
+    // Command Code /alpha/generate is always NDJSON. Claude Code's auto-mode
+    // classifier omits `stream` and expects Anthropic JSON; returning SSE is
+    // parsed as a classifier outage.
+    let use_streaming = if aggregate_codex_oauth_responses_sse
+        || should_aggregate_commandcode_ndjson(is_stream, api_format)
+    {
         false
     } else {
         should_use_claude_transform_streaming(
@@ -2177,6 +2182,10 @@ fn should_use_claude_transform_streaming(
     requested_streaming || upstream_is_sse || (is_codex_oauth && api_format == "openai_responses")
 }
 
+fn should_aggregate_commandcode_ndjson(requested_streaming: bool, api_format: &str) -> bool {
+    !requested_streaming && api_format == "commandcode"
+}
+
 async fn responses_sse_stream_to_anthropic_message(
     stream: impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     hosted_web_search_name: Option<String>,
@@ -2875,7 +2884,8 @@ mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
         codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
+        responses_sse_to_response_value, should_aggregate_commandcode_ndjson,
+        should_use_claude_transform_streaming, transform,
         upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
@@ -3488,6 +3498,13 @@ data: [DONE]\n\n";
             "openai_chat",
             false,
         ));
+    }
+
+    #[test]
+    fn commandcode_nonstream_client_aggregates_even_if_upstream_is_sse() {
+        assert!(should_aggregate_commandcode_ndjson(false, "commandcode"));
+        assert!(!should_aggregate_commandcode_ndjson(true, "commandcode"));
+        assert!(!should_aggregate_commandcode_ndjson(false, "openai_chat"));
     }
 
     #[test]

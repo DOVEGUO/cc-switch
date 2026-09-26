@@ -80,6 +80,14 @@ fn commandcode_content_parts(value: Option<&Value>) -> Vec<Value> {
     }
 }
 
+/// Claude Code auto-mode stage-1 safety classifier.
+/// It always sends `stop_sequences: ["</block>"]` on a tiny allow/deny turn.
+fn is_auto_classifier_request(body: &Value) -> bool {
+    body.get("stop_sequences")
+        .and_then(Value::as_array)
+        .is_some_and(|seqs| seqs.iter().any(|s| s.as_str() == Some("</block>")))
+}
+
 fn resolve_commandcode_effort(body: &Value) -> Option<&'static str> {
     if let Some(effort) = body
         .pointer("/output_config/effort")
@@ -116,7 +124,14 @@ pub fn anthropic_to_commandcode(
     body: Value,
     session_id: Option<&str>,
 ) -> Result<Value, ProxyError> {
-    let effort = resolve_commandcode_effort(&body);
+    let classifier = is_auto_classifier_request(&body);
+    // Classifier is a 64-token allow/deny. Coding-agent effort and the live
+    // session thread make /alpha/generate too slow for Claude Code's ~3s window.
+    let effort = if classifier {
+        None
+    } else {
+        resolve_commandcode_effort(&body)
+    };
     let chat = super::transform::anthropic_to_openai_with_reasoning_content(body, true)?;
 
     let model = chat.get("model").and_then(Value::as_str).ok_or_else(|| {
@@ -272,11 +287,15 @@ pub fn anthropic_to_commandcode(
         params["reasoning_effort"] = json!(effort);
     }
 
-    let thread_id = session_id
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let thread_id = if classifier {
+        Uuid::new_v4().to_string()
+    } else {
+        session_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| Uuid::new_v4().to_string())
+    };
 
     Ok(json!({
         "config": {
@@ -833,6 +852,69 @@ mod tests {
         let cc = anthropic_to_commandcode(body, Some("session-1")).unwrap();
         assert_eq!(cc["params"]["model"], "deepseek/deepseek-v4.1-flash");
         assert_eq!(cc["params"]["max_tokens"], 200000);
+    }
+
+    #[test]
+    fn auto_classifier_skips_coding_agent_reasoning_and_session_thread() {
+        // Claude Code auto-mode stage-1 classifier: tiny budget, stop on
+        // </block>, often carrying thinking/effort from the session model.
+        // That request must not join the coding-agent thread or run at max effort.
+        let body = json!({
+            "model": "claude-sonnet-5[1M]",
+            "max_tokens": 64,
+            "temperature": 0,
+            "stop_sequences": ["</block>"],
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "max"},
+            "messages": [{
+                "role": "user",
+                "content": "Err on the side of blocking. </block> immediately."
+            }]
+        });
+        let cc = anthropic_to_commandcode(body, Some("session-1")).unwrap();
+        assert!(
+            cc["params"].get("reasoning_effort").is_none(),
+            "classifier must not inherit session reasoning_effort, got {:?}",
+            cc["params"].get("reasoning_effort")
+        );
+        assert_ne!(
+            cc["threadId"].as_str(),
+            Some("session-1"),
+            "classifier must not reuse the coding-agent threadId"
+        );
+        assert_eq!(cc["params"]["max_tokens"], 64);
+        assert_eq!(cc["params"]["temperature"].as_f64(), Some(0.0));
+        assert_eq!(cc["params"]["model"], "claude-sonnet-5");
+    }
+
+    #[test]
+    fn short_chat_without_block_stop_keeps_session_thread() {
+        let body = json!({
+            "model": "deepseek/deepseek-v4.1-flash",
+            "max_tokens": 64,
+            "temperature": 0,
+            "messages": [{"role":"user","content":"hi"}]
+        });
+        let cc = anthropic_to_commandcode(body, Some("session-1")).unwrap();
+        assert_eq!(cc["threadId"], "session-1");
+    }
+
+    #[test]
+    fn agent_turn_keeps_session_thread_and_effort() {
+        let body = json!({
+            "model": "deepseek/deepseek-v4.1-flash",
+            "max_tokens": 64000,
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role":"user","content":"refactor this"}],
+            "tools": [{
+                "name": "bash",
+                "input_schema": {"type": "object", "properties": {}}
+            }]
+        });
+        let cc = anthropic_to_commandcode(body, Some("session-1")).unwrap();
+        assert_eq!(cc["threadId"], "session-1");
+        assert_eq!(cc["params"]["reasoning_effort"], "xhigh");
+        assert_eq!(cc["params"]["stream"], true);
     }
 
     #[test]
