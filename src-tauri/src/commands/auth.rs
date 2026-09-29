@@ -139,6 +139,9 @@ pub async fn auth_start_login(
     kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<ManagedAuthDeviceCodeResponse, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
+    if auth_provider == AUTH_PROVIDER_KIRO_OAUTH {
+        return Err("Kiro account login is not available in this release; use a Kiro API Key".into());
+    }
     match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             if target_account_id.is_some() {

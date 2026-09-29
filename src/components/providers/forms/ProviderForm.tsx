@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { KIRO_ACCOUNT_LOGIN_ENABLED } from "@/config/kiro";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
@@ -601,6 +602,7 @@ function ProviderFormFull({
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "kiro_oauth"));
   const [kiroAuthMode, setKiroAuthMode] = useState<"api_key" | "oauth">(() =>
+    KIRO_ACCOUNT_LOGIN_ENABLED &&
     initialData?.meta?.authBinding?.source === "managed_account" &&
     initialData.meta.authBinding.authProvider === "kiro_oauth"
       ? "oauth"
@@ -824,7 +826,8 @@ function ProviderFormFull({
   const isKiroProvider =
     appId === "claude" &&
     (presetProviderType === "kiro" || initialProviderType === "kiro");
-  const usesKiroOauth = isKiroProvider && kiroAuthMode === "oauth";
+  const usesKiroOauth =
+    KIRO_ACCOUNT_LOGIN_ENABLED && isKiroProvider && kiroAuthMode === "oauth";
   const wasCodexOfficialManagedOauthBound =
     appId === "codex" &&
     Boolean(resolveManagedAccountId(initialData?.meta, "codex_oauth"));

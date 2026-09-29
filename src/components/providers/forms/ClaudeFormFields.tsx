@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { KIRO_ACCOUNT_LOGIN_ENABLED } from "@/config/kiro";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -743,11 +744,13 @@ export function ClaudeFormFields({
               <SelectItem value="api_key">
                 {t("kiroOauth.apiKeyMode", { defaultValue: "Kiro API Key" })}
               </SelectItem>
-              <SelectItem value="oauth">
-                {t("kiroOauth.builderIdMode", {
-                  defaultValue: "Kiro Builder ID 账号",
-                })}
-              </SelectItem>
+              {KIRO_ACCOUNT_LOGIN_ENABLED && (
+                <SelectItem value="oauth">
+                  {t("kiroOauth.builderIdMode", {
+                    defaultValue: "Kiro Builder ID 账号",
+                  })}
+                </SelectItem>
+              )}
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
@@ -763,12 +766,14 @@ export function ClaudeFormFields({
         </div>
       )}
 
-      {isKiroPreset && kiroAuthMode === "oauth" && (
-        <KiroOAuthSection
-          selectedAccountId={selectedKiroAccountId}
-          onAccountSelect={onKiroAccountSelect}
-        />
-      )}
+      {KIRO_ACCOUNT_LOGIN_ENABLED &&
+        isKiroPreset &&
+        kiroAuthMode === "oauth" && (
+          <KiroOAuthSection
+            selectedAccountId={selectedKiroAccountId}
+            onAccountSelect={onKiroAccountSelect}
+          />
+        )}
 
       {/* API Key 输入框（非 OAuth 预设时显示） */}
       {shouldShowApiKey && !usesOAuth && (

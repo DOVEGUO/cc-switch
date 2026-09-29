@@ -114,6 +114,8 @@ describe("CodexOAuthSection", () => {
   it("renders account quota in Auth Center", () => {
     render(<AuthCenterPanel />);
 
+    expect(screen.queryByText("Kiro (Builder ID)")).not.toBeInTheDocument();
+
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-1");
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-2");
     expect(
