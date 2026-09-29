@@ -10,7 +10,7 @@ import { providerPresets } from "@/config/claudeProviderPresets";
 
 describe("Kiro provider icon", () => {
   it("resolves the preset icon to the bundled official SVG", () => {
-    const preset = providerPresets.find((item) => item.providerType === "kiro");
+    const preset = providerPresets.find((item) => item.apiFormat === "kiro");
     expect(preset?.icon).toBe("kiro");
     expect(hasIcon("kiro")).toBe(true);
     expect(isUrlIcon("kiro")).toBe(true);

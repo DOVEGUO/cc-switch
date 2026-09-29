@@ -35,9 +35,6 @@ const REASONING_VENDOR_HINTS: &[&str] = &["deepseek", "mimo", "xiaomimimo"];
 /// 供 handler/forwarder 外部使用的公开函数。
 /// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
 pub fn get_claude_api_format(provider: &Provider) -> &'static str {
-    if provider.is_kiro() {
-        return "kiro";
-    }
     // 0) Managed Responses OAuth providers force their wire protocol. This is
     // an invariant, not a preset default: editable metadata must not be able to
     // send an Anthropic Messages body to a Responses-only upstream.
@@ -468,14 +465,7 @@ pub fn transform_claude_request_for_api_format(
             session_id,
         ),
         "commandcode" => super::commandcode::anthropic_to_commandcode(body, session_id),
-        "kiro" => {
-            let origin = if provider.uses_kiro_managed_auth() {
-                super::kiro::KIRO_ORIGIN_OAUTH
-            } else {
-                super::kiro::KIRO_ORIGIN_API_KEY
-            };
-            super::kiro::anthropic_to_kiro(body, session_id, origin)
-        }
+        "kiro" => super::kiro::anthropic_to_kiro(body, session_id),
         _ => Ok(body),
     }
 }
@@ -498,13 +488,10 @@ impl ClaudeAdapter {
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
-        // Command Code /alpha/generate only accepts Bearer authentication.
-        if self.get_api_format(provider) == "commandcode" {
+        // Command Code /alpha/generate and Kiro Runtime both only accept
+        // Bearer authentication (no x-api-key).
+        if matches!(self.get_api_format(provider), "commandcode" | "kiro") {
             return ProviderType::ClaudeAuth;
-        }
-
-        if self.get_api_format(provider) == "kiro" {
-            return ProviderType::Kiro;
         }
 
         // 检测 Gemini Native 格式
@@ -819,26 +806,6 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
-        if provider_type == ProviderType::Kiro {
-            let managed = provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.auth_binding.as_ref())
-                .is_some_and(|binding| {
-                    binding.source == crate::provider::AuthBindingSource::ManagedAccount
-                        && binding.auth_provider.as_deref() == Some("kiro_oauth")
-                });
-            if managed {
-                return Some(AuthInfo::new(
-                    "kiro_oauth_placeholder".to_string(),
-                    AuthStrategy::KiroOAuth,
-                ));
-            }
-            return self
-                .extract_key(provider)
-                .map(|key| AuthInfo::new(key, AuthStrategy::KiroApiKey));
-        }
-
         let key = self.extract_key(provider)?;
 
         match provider_type {
@@ -974,13 +941,6 @@ impl ProviderAdapter for ClaudeAdapter {
                 ]
             }
             AuthStrategy::XaiOAuth => {
-                vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
-            }
-            AuthStrategy::KiroApiKey => vec![
-                (HeaderName::from_static("authorization"), hv(&bearer)?),
-                (HeaderName::from_static("tokentype"), HeaderValue::from_static("API_KEY")),
-            ],
-            AuthStrategy::KiroOAuth => {
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
             AuthStrategy::GitHubCopilot => {

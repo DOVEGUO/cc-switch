@@ -52,9 +52,7 @@ export function useManagedAuth(
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: ["xai_oauth", "kiro_oauth"].includes(authProvider)
-      ? 15_000
-      : false,
+    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
   });
 
   const stopPolling = useCallback(() => {
@@ -70,8 +68,7 @@ export function useManagedAuth(
 
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      if (!["codex_oauth", "kiro_oauth"].includes(authProvider) || !deviceCode)
-        return true;
+      if (authProvider !== "codex_oauth" || !deviceCode) return true;
       try {
         const cancelled = await authApi.authCancelLogin(
           authProvider,

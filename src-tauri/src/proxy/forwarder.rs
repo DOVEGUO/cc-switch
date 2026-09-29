@@ -22,7 +22,7 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::{CodexOAuthState, CopilotAuthState, KiroOAuthState, XaiOAuthState};
+use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
@@ -1485,7 +1485,7 @@ impl RequestForwarder {
             .then(|| CodexStandaloneEndpoint::from_effective_endpoint(&effective_endpoint))
             .flatten();
 
-        let mut url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
@@ -1890,43 +1890,6 @@ impl RequestForwarder {
                 }
             }
 
-            if auth.strategy == AuthStrategy::KiroOAuth {
-                if let Some(app_handle) = &self.app_handle {
-                    let kiro_state = app_handle.state::<KiroOAuthState>();
-                    let account_id = provider
-                        .meta
-                        .as_ref()
-                        .and_then(|meta| meta.managed_account_id_for("kiro_oauth"));
-                    let credential = match &account_id {
-                        Some(id) => kiro_state.0.get_runtime_credential_for_account(id).await,
-                        None => kiro_state.0.get_runtime_credential().await,
-                    }
-                    .map_err(|error| ProxyError::AuthError(format!(
-                        "Kiro OAuth 认证失败: {error}"
-                    )))?;
-                    super::providers::kiro::apply_profile_arn(
-                        &mut filtered_body,
-                        credential.profile_arn.as_deref(),
-                    );
-                    if !credential.region.is_empty() {
-                        let runtime = super::providers::kiro::runtime_base_url(&credential.region);
-                        if !url.starts_with(&runtime) {
-                            url = format!("{runtime}/");
-                        }
-                    }
-                    auth = AuthInfo::new(credential.token, AuthStrategy::KiroOAuth);
-                    log::debug!(
-                        "[KiroOAuth] 成功获取 Runtime token (account={}, region={})",
-                        account_id.as_deref().unwrap_or("default"),
-                        credential.region
-                    );
-                } else {
-                    return Err(ProxyError::AuthError(
-                        "Kiro OAuth 认证不可用（无 AppHandle）".to_string(),
-                    ));
-                }
-            }
-
             for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
                 if !secret.is_empty() && !log_secrets.contains(secret) {
                     log_secrets.push(secret.clone());
@@ -2131,7 +2094,6 @@ impl RequestForwarder {
             if key_str.eq_ignore_ascii_case("authorization")
                 || key_str.eq_ignore_ascii_case("x-api-key")
                 || key_str.eq_ignore_ascii_case("x-goog-api-key")
-                || (is_kiro && key_str.eq_ignore_ascii_case("tokentype"))
             {
                 // Codex official account cards deliberately keep credentials
                 // out of provider storage. `requires_openai_auth = true` makes
@@ -2175,16 +2137,6 @@ impl RequestForwarder {
                     ordered_headers.append(
                         http::header::ACCEPT,
                         http::HeaderValue::from_static("text/event-stream"),
-                    );
-                }
-                continue;
-            }
-            if is_kiro && key_str.eq_ignore_ascii_case("accept") {
-                if !saw_accept {
-                    saw_accept = true;
-                    ordered_headers.append(
-                        http::header::ACCEPT,
-                        http::HeaderValue::from_static("*/*"),
                     );
                 }
                 continue;
@@ -2288,12 +2240,6 @@ impl RequestForwarder {
                 http::HeaderValue::from_static("text/event-stream"),
             );
         }
-        if is_kiro && !saw_accept {
-            ordered_headers.append(
-                http::header::ACCEPT,
-                http::HeaderValue::from_static("*/*"),
-            );
-        }
 
         // On the Codex→Anthropic path, add application/json when Accept is missing (matching a native Anthropic client).
         if codex_responses_to_anthropic && !saw_accept {
@@ -2355,6 +2301,10 @@ impl RequestForwarder {
             ordered_headers.insert(
                 http::header::CONTENT_TYPE,
                 http::HeaderValue::from_static("application/x-amz-json-1.0"),
+            );
+            ordered_headers.insert(
+                http::HeaderName::from_static("tokentype"),
+                http::HeaderValue::from_static("API_KEY"),
             );
             ordered_headers.insert(
                 http::header::USER_AGENT,

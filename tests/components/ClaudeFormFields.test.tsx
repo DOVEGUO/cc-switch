@@ -127,8 +127,6 @@ describe("ClaudeFormFields", () => {
     renderCopilotForm({
       isCopilotPreset: false,
       usesOAuth: false,
-      isKiroPreset: true,
-      kiroAuthMode: "api_key",
       apiKey: "ksk_test",
       baseUrl: "https://runtime.eu-central-1.kiro.dev",
       apiFormat: "kiro",

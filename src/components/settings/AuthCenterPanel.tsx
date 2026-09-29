@@ -1,14 +1,12 @@
 import { useEffect, useRef } from "react";
 import { Github, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { KIRO_ACCOUNT_LOGIN_ENABLED } from "@/config/kiro";
 import { Badge } from "@/components/ui/badge";
 import { CodexIcon } from "@/components/BrandIcons";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import type { ManagedAuthProvider } from "@/lib/api";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
-import { KiroOAuthSection } from "@/components/providers/forms/KiroOAuthSection";
 import { ProviderIcon } from "@/components/ProviderIcon";
 
 interface AuthCenterPanelProps {
@@ -20,7 +18,6 @@ export function AuthCenterPanel({ authScrollTarget }: AuthCenterPanelProps) {
   const copilotSectionRef = useRef<HTMLElement | null>(null);
   const codexOauthSectionRef = useRef<HTMLElement | null>(null);
   const xaiOauthSectionRef = useRef<HTMLElement | null>(null);
-  const kiroOauthSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!authScrollTarget) return;
@@ -30,9 +27,7 @@ export function AuthCenterPanel({ authScrollTarget }: AuthCenterPanelProps) {
         ? copilotSectionRef
         : authScrollTarget === "codex_oauth"
           ? codexOauthSectionRef
-          : authScrollTarget === "xai_oauth"
-            ? xaiOauthSectionRef
-            : kiroOauthSectionRef;
+          : xaiOauthSectionRef;
 
     const frame = requestAnimationFrame(() => {
       const prefersReducedMotion = window.matchMedia(
@@ -136,29 +131,6 @@ export function AuthCenterPanel({ authScrollTarget }: AuthCenterPanelProps) {
 
         <XaiOAuthSection />
       </section>
-
-      {KIRO_ACCOUNT_LOGIN_ENABLED && (
-        <section
-          ref={kiroOauthSectionRef}
-          className="scroll-mt-4 rounded-xl border border-border/60 bg-card/60 p-6"
-        >
-          <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
-              <ProviderIcon icon="kiro" name="Kiro" size={20} />
-            </div>
-            <div>
-              <h4 className="font-medium">Kiro (Builder ID)</h4>
-              <p className="text-sm text-muted-foreground">
-                {t("settings.authCenter.kiroOauthDescription", {
-                  defaultValue: "管理 Kiro Builder ID 账号",
-                })}
-              </p>
-            </div>
-          </div>
-
-          <KiroOAuthSection />
-        </section>
-      )}
     </div>
   );
 }

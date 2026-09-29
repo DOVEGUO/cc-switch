@@ -97,7 +97,7 @@ jobs:
           CC_SWITCH_TEST_HOME: ${{ runner.temp }}/cc-switch-tests
         run: cargo test commandcode --lib
 
-      - name: Kiro authentication and bridge tests
+      - name: Kiro bridge tests
         working-directory: src-tauri
         env:
           CC_SWITCH_TEST_HOME: ${{ runner.temp }}/cc-switch-tests

@@ -458,7 +458,7 @@ mod tests {
         let network_proxy = std::env::var("KIRO_TEST_PROXY").ok();
         super::super::http_client::init(network_proxy.as_deref()).unwrap();
         let region = std::env::var("KIRO_REGION").unwrap_or_else(|_| "us-east-1".into());
-        let base = super::super::providers::kiro::runtime_base_url(&region);
+        let base = format!("https://runtime.{region}.kiro.dev");
         let models = crate::services::model_fetch::fetch_models(&base, &key, false, None, None, Some("kiro"), None).await.unwrap();
         assert!(!models.is_empty(), "Kiro returned no models");
         println!("Discovered {} models in {region}", models.len());
@@ -467,7 +467,7 @@ mod tests {
         let mut provider = Provider::with_id("kiro-live".into(), "Kiro live test".into(), json!({
             "env": {"ANTHROPIC_BASE_URL": base, "ANTHROPIC_AUTH_TOKEN": key}
         }), None);
-        provider.meta = Some(ProviderMeta { api_format: Some("kiro".into()), provider_type: Some("kiro".into()), ..Default::default() });
+        provider.meta = Some(ProviderMeta { api_format: Some("kiro".into()), ..Default::default() });
         db.save_provider("claude", &provider).unwrap();
         db.set_current_provider("claude", &provider.id).unwrap();
         let proxy = ProxyServer::new(ProxyConfig { listen_port: 0, non_streaming_timeout: 120, ..Default::default() }, db, None);

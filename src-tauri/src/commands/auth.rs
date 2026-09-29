@@ -3,20 +3,17 @@ use tauri::State;
 use crate::app_config::AppType;
 use crate::commands::codex_oauth::CodexOAuthState;
 use crate::commands::copilot::CopilotAuthState;
-use crate::commands::kiro_oauth::KiroOAuthState;
 use crate::commands::xai_oauth::XaiOAuthState;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthError;
 use crate::proxy::providers::copilot_auth::{
     CopilotAuthError, GitHubAccount, GitHubDeviceCodeResponse,
 };
-use crate::proxy::providers::kiro_auth::{KiroOAuthAccount, KiroOAuthError};
 use crate::proxy::providers::xai_oauth_auth::{XaiOAuthAccount, XaiOAuthError};
 use crate::store::AppState;
 
 const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
 const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
 const AUTH_PROVIDER_XAI_OAUTH: &str = "xai_oauth";
-const AUTH_PROVIDER_KIRO_OAUTH: &str = "kiro_oauth";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ManagedAuthAccount {
@@ -57,7 +54,6 @@ fn ensure_auth_provider(auth_provider: &str) -> Result<&'static str, String> {
         AUTH_PROVIDER_GITHUB_COPILOT => Ok(AUTH_PROVIDER_GITHUB_COPILOT),
         AUTH_PROVIDER_CODEX_OAUTH => Ok(AUTH_PROVIDER_CODEX_OAUTH),
         AUTH_PROVIDER_XAI_OAUTH => Ok(AUTH_PROVIDER_XAI_OAUTH),
-        AUTH_PROVIDER_KIRO_OAUTH => Ok(AUTH_PROVIDER_KIRO_OAUTH),
         _ => Err(format!("Unsupported auth provider: {auth_provider}")),
     }
 }
@@ -97,23 +93,6 @@ fn map_xai_account(
     }
 }
 
-fn map_kiro_account(
-    account: KiroOAuthAccount,
-    default_account_id: Option<&str>,
-) -> ManagedAuthAccount {
-    ManagedAuthAccount {
-        is_default: default_account_id == Some(account.id.as_str()),
-        id: account.id,
-        provider: AUTH_PROVIDER_KIRO_OAUTH.to_string(),
-        login: account.login,
-        avatar_url: account.avatar_url,
-        authenticated_at: account.authenticated_at,
-        github_domain: account.github_domain,
-        reauth_required: false,
-        requires_reauth: account.requires_reauth,
-    }
-}
-
 fn map_device_code_response(
     provider: &str,
     response: GitHubDeviceCodeResponse,
@@ -136,12 +115,8 @@ pub async fn auth_start_login(
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
-    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<ManagedAuthDeviceCodeResponse, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    if auth_provider == AUTH_PROVIDER_KIRO_OAUTH {
-        return Err("Kiro account login is not available in this release; use a Kiro API Key".into());
-    }
     match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             if target_account_id.is_some() {
@@ -173,13 +148,6 @@ pub async fn auth_start_login(
                 .map_err(|e| e.to_string())?;
             Ok(map_device_code_response(auth_provider, response))
         }
-        AUTH_PROVIDER_KIRO_OAUTH => {
-            if target_account_id.is_some() {
-                return Err("Targeted re-authentication is not supported for Kiro OAuth".into());
-            }
-            let response = kiro_state.0.start_device_flow().await.map_err(|e| e.to_string())?;
-            Ok(map_device_code_response(auth_provider, response))
-        }
         _ => unreachable!(),
     }
 }
@@ -193,7 +161,6 @@ pub async fn auth_poll_for_account(
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
-    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<Option<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -246,16 +213,6 @@ pub async fn auth_poll_for_account(
                 Err(e) => Err(e.to_string()),
             }
         }
-        AUTH_PROVIDER_KIRO_OAUTH => {
-            match kiro_state.0.poll_for_token(&device_code).await {
-                Ok(account) => {
-                    let default_account_id = kiro_state.0.get_status().await.default_account_id;
-                    Ok(account.map(|account| map_kiro_account(account, default_account_id.as_deref())))
-                }
-                Err(KiroOAuthError::AuthorizationPending) => Ok(None),
-                Err(e) => Err(e.to_string()),
-            }
-        }
         _ => unreachable!(),
     }
 }
@@ -265,14 +222,12 @@ pub async fn auth_cancel_login(
     auth_provider: String,
     device_code: String,
     codex_state: State<'_, CodexOAuthState>,
-    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<bool, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
-        AUTH_PROVIDER_CODEX_OAUTH => Ok(codex_state.0.cancel_device_flow(&device_code).await),
-        AUTH_PROVIDER_KIRO_OAUTH => Ok(kiro_state.0.cancel_device_flow(&device_code).await),
-        _ => Err("Login cancellation is not supported for this provider".to_string()),
+    if auth_provider != AUTH_PROVIDER_CODEX_OAUTH {
+        return Err("Login cancellation is only supported for Codex OAuth".to_string());
     }
+    Ok(codex_state.0.cancel_device_flow(&device_code).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -281,7 +236,6 @@ pub async fn auth_list_accounts(
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
-    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<Vec<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -315,13 +269,6 @@ pub async fn auth_list_accounts(
                 .map(|account| map_xai_account(account, default_account_id.as_deref()))
                 .collect())
         }
-        AUTH_PROVIDER_KIRO_OAUTH => {
-            let status = kiro_state.0.get_status().await;
-            let default_account_id = status.default_account_id.clone();
-            Ok(status.accounts.into_iter()
-                .map(|account| map_kiro_account(account, default_account_id.as_deref()))
-                .collect())
-        }
         _ => unreachable!(),
     }
 }
@@ -332,7 +279,6 @@ pub async fn auth_get_status(
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
-    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<ManagedAuthStatus, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -388,19 +334,6 @@ pub async fn auth_get_status(
                     .collect(),
             })
         }
-        AUTH_PROVIDER_KIRO_OAUTH => {
-            let status = kiro_state.0.get_status().await;
-            let default_account_id = status.default_account_id.clone();
-            Ok(ManagedAuthStatus {
-                provider: auth_provider.to_string(),
-                authenticated: status.authenticated,
-                default_account_id: default_account_id.clone(),
-                migration_error: None,
-                accounts: status.accounts.into_iter()
-                    .map(|account| map_kiro_account(account, default_account_id.as_deref()))
-                    .collect(),
-            })
-        }
         _ => unreachable!(),
     }
 }
@@ -412,7 +345,6 @@ pub async fn auth_remove_account(
     app_state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
     xai_state: State<'_, XaiOAuthState>,
-    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -433,7 +365,6 @@ pub async fn auth_remove_account(
                 .await
                 .map_err(|e| e.to_string())
         }
-        AUTH_PROVIDER_KIRO_OAUTH => kiro_state.0.remove_account(&account_id).await.map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }
@@ -463,7 +394,6 @@ pub async fn auth_set_default_account(
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
-    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -488,7 +418,6 @@ pub async fn auth_set_default_account(
                 .await
                 .map_err(|e| e.to_string())
         }
-        AUTH_PROVIDER_KIRO_OAUTH => kiro_state.0.set_default_account(&account_id).await.map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }
@@ -499,7 +428,6 @@ pub async fn auth_logout(
     app_state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
     xai_state: State<'_, XaiOAuthState>,
-    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -512,7 +440,6 @@ pub async fn auth_logout(
             let auth_manager = xai_state.0.write().await;
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
-        AUTH_PROVIDER_KIRO_OAUTH => kiro_state.0.clear_auth().await.map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }

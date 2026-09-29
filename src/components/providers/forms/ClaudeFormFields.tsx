@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { KIRO_ACCOUNT_LOGIN_ENABLED } from "@/config/kiro";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -35,7 +34,6 @@ import {
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
-import { KiroOAuthSection } from "./KiroOAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -107,13 +105,6 @@ interface ClaudeFormFieldsProps {
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
-
-  // Kiro Runtime: API key or managed Builder ID account.
-  isKiroPreset?: boolean;
-  kiroAuthMode?: "api_key" | "oauth";
-  onKiroAuthModeChange?: (mode: "api_key" | "oauth") => void;
-  selectedKiroAccountId?: string | null;
-  onKiroAccountSelect?: (accountId: string | null) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -196,11 +187,6 @@ export function ClaudeFormFields({
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
-  isKiroPreset,
-  kiroAuthMode = "api_key",
-  onKiroAuthModeChange,
-  selectedKiroAccountId,
-  onKiroAccountSelect,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -241,6 +227,7 @@ export function ClaudeFormFields({
   onLocalProxyBodyOverrideChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
+  const isKiro = apiFormat === "kiro";
   const hasRequestOverrides = Boolean(
     localProxyHeadersOverride.trim() || localProxyBodyOverride.trim(),
   );
@@ -257,17 +244,17 @@ export function ClaudeFormFields({
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
-    isXaiOauthPreset || isKiroPreset ? false : hasAnyAdvancedValue,
+    isXaiOauthPreset ? false : hasAnyAdvancedValue,
   );
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
-    if (isXaiOauthPreset || isKiroPreset) {
+    if (isXaiOauthPreset) {
       setAdvancedExpanded(false);
     } else if (hasAnyAdvancedValue) {
       setAdvancedExpanded(true);
     }
-  }, [hasAnyAdvancedValue, isKiroPreset, isXaiOauthPreset]);
+  }, [hasAnyAdvancedValue, isXaiOauthPreset]);
 
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
@@ -287,12 +274,6 @@ export function ClaudeFormFields({
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
-  const modelFetchRequestRef = useRef(0);
-  useEffect(() => {
-    modelFetchRequestRef.current += 1;
-    setFetchedModels([]);
-    setIsFetchingModels(false);
-  }, [baseUrl, apiKey, isKiroPreset]);
 
   const showModelFetchResult = useCallback(
     (count: number) => {
@@ -322,35 +303,29 @@ export function ClaudeFormFields({
     const modelsUrl = matchedPreset?.modelsUrl;
 
     setIsFetchingModels(true);
-    const request = ++modelFetchRequestRef.current;
     fetchModelsForConfig(
       baseUrl,
       apiKey,
       isFullUrl,
       modelsUrl,
       customUserAgent,
-      isKiroPreset ? { apiFormat: "kiro" } : undefined,
+      isKiro ? { apiFormat: "kiro" } : undefined,
     )
       .then((models) => {
-        if (request !== modelFetchRequestRef.current) return;
         setFetchedModels(models);
         showModelFetchResult(models.length);
       })
       .catch((err) => {
-        if (request !== modelFetchRequestRef.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
-      .finally(() => {
-        if (request === modelFetchRequestRef.current)
-          setIsFetchingModels(false);
-      });
+      .finally(() => setIsFetchingModels(false));
   }, [
     baseUrl,
     apiKey,
     isFullUrl,
     customUserAgent,
-    isKiroPreset,
+    isKiro,
     showModelFetchResult,
     t,
   ]);
@@ -726,55 +701,6 @@ export function ClaudeFormFields({
         />
       )}
 
-      {isKiroPreset && (
-        <div className="space-y-2">
-          <FormLabel>
-            {t("kiroOauth.authMethod", { defaultValue: "Kiro 认证方式" })}
-          </FormLabel>
-          <Select
-            value={kiroAuthMode}
-            onValueChange={(value) =>
-              onKiroAuthModeChange?.(value as "api_key" | "oauth")
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="api_key">
-                {t("kiroOauth.apiKeyMode", { defaultValue: "Kiro API Key" })}
-              </SelectItem>
-              {KIRO_ACCOUNT_LOGIN_ENABLED && (
-                <SelectItem value="oauth">
-                  {t("kiroOauth.builderIdMode", {
-                    defaultValue: "Kiro Builder ID 账号",
-                  })}
-                </SelectItem>
-              )}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            {kiroAuthMode === "api_key"
-              ? t("kiroOauth.apiKeyModeHint", {
-                  defaultValue: "使用 ksk_ 开头的 Kiro API Key。",
-                })
-              : t("kiroOauth.builderIdModeHint", {
-                  defaultValue:
-                    "通过 AWS Builder ID 设备码登录，凭据由 CC Switch 托管并自动刷新。",
-                })}
-          </p>
-        </div>
-      )}
-
-      {KIRO_ACCOUNT_LOGIN_ENABLED &&
-        isKiroPreset &&
-        kiroAuthMode === "oauth" && (
-          <KiroOAuthSection
-            selectedAccountId={selectedKiroAccountId}
-            onAccountSelect={onKiroAccountSelect}
-          />
-        )}
-
       {/* API Key 输入框（非 OAuth 预设时显示） */}
       {shouldShowApiKey && !usesOAuth && (
         <ApiKeySection
@@ -789,7 +715,7 @@ export function ClaudeFormFields({
       )}
 
       {/* 模板变量输入 */}
-      {isKiroPreset && kiroAuthMode === "api_key" && (
+      {isKiro && (
         <div className="space-y-2">
           <FormLabel htmlFor="kiro-region">
             {t("kiroApi.region", "Kiro Region")}
@@ -858,7 +784,7 @@ export function ClaudeFormFields({
       )}
 
       {/* Base URL 输入框 */}
-      {shouldShowSpeedTest && !isKiroPreset && (
+      {shouldShowSpeedTest && !isKiro && (
         <EndpointField
           id="baseUrl"
           label={t("providerForm.apiEndpoint")}
@@ -1087,10 +1013,7 @@ export function ClaudeFormFields({
                     variant="outline"
                     size="sm"
                     onClick={handleModelFetchClick}
-                    disabled={
-                      modelFetchLoading ||
-                      (isKiroPreset && kiroAuthMode === "oauth")
-                    }
+                    disabled={modelFetchLoading}
                     className="h-7 gap-1"
                   >
                     {modelFetchLoading ? (

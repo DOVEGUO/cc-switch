@@ -29,10 +29,6 @@ vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
   XaiOAuthSection: () => <div />,
 }));
 
-vi.mock("@/components/providers/forms/KiroOAuthSection", () => ({
-  KiroOAuthSection: () => <div />,
-}));
-
 describe("CodexOAuthSection", () => {
   let scrollIntoViewDescriptor: PropertyDescriptor | undefined;
 
@@ -113,8 +109,6 @@ describe("CodexOAuthSection", () => {
 
   it("renders account quota in Auth Center", () => {
     render(<AuthCenterPanel />);
-
-    expect(screen.queryByText("Kiro (Builder ID)")).not.toBeInTheDocument();
 
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-1");
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-2");

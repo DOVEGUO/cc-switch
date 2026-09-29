@@ -200,9 +200,6 @@ fn sse(message: &Value) -> String {
 
 pub async fn handle(provider: &Provider, body: &Value) -> Result<axum::response::Response, ProxyError> {
     let (query, tool) = query_and_tool(body)?;
-    if provider.uses_kiro_managed_auth() {
-        return Err(invalid("Kiro WebSearch currently requires API Key authentication"));
-    }
     let adapter = ClaudeAdapter::new();
     let auth = adapter.extract_auth(provider).ok_or_else(|| ProxyError::AuthError("Missing Kiro API Key".into()))?;
     let url = mcp_url(&adapter.extract_base_url(provider)?)?;

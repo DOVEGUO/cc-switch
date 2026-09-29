@@ -1,12 +1,10 @@
 # Kiro API Key 接入
 
-第一阶段是 API Key 路由。Kiro Account Login（Builder ID / OAuth）单独作为第二阶段开发。
-
-本期关闭 Kiro 账号登录选项、认证中心入口和启动授权命令；已有兼容代码暂时保留，不作为本期功能发布。
+只支持 Kiro API Key 接入，不提供 Kiro 账号登录（Builder ID / OAuth）。
 
 ## 配置
 
-1. 添加 Claude 供应商，选择 **Kiro** 预设和 **Kiro API Key**。
+1. 添加 Claude 供应商，选择 **Kiro** 预设。
 2. 填入在 Kiro 门户创建的 `ksk_...` 密钥。
 3. 设置密钥对应的 **Kiro Region**，例如 `us-east-1` 或 `eu-central-1`。
 4. 点击获取模型列表，在模型映射中选择服务端返回的原始 `modelId`。

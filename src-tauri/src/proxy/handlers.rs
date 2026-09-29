@@ -201,7 +201,7 @@ async fn handle_messages_for_app(
         .unwrap_or(false);
 
     // 转发请求
-    if ctx.provider.is_kiro()
+    if get_claude_api_format(&ctx.provider) == "kiro"
         && super::providers::kiro_websearch::has_native_search(&body)
     {
         return super::providers::kiro_websearch::handle(&ctx.provider, &body).await;
