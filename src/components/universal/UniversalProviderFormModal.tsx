@@ -52,7 +52,6 @@ export function UniversalProviderFormModal({
   // 应用启用状态
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
-  const [geminiEnabled, setGeminiEnabled] = useState(false);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -73,7 +72,6 @@ export function UniversalProviderFormModal({
       setNotes(editingProvider.notes || "");
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
-      setGeminiEnabled(false);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -92,7 +90,6 @@ export function UniversalProviderFormModal({
       setNotes("");
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
-      setGeminiEnabled(false);
       setModels(deepClone(defaultPreset.defaultModels));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -105,7 +102,6 @@ export function UniversalProviderFormModal({
         setName(preset.name);
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
-        setGeminiEnabled(false);
         setModels(deepClone(preset.defaultModels));
       }
     },
@@ -114,7 +110,7 @@ export function UniversalProviderFormModal({
 
   // 更新模型配置
   const updateModel = useCallback(
-    (app: "claude" | "codex" | "gemini", field: string, value: string) => {
+    (app: "claude" | "codex", field: string, value: string) => {
       setModels((prev) => ({
         ...prev,
         [app]: {
@@ -172,19 +168,6 @@ requires_openai_auth = true`;
     };
   }, [codexEnabled, baseUrl, apiKey, models.codex]);
 
-  // 计算 Gemini 配置 JSON 预览
-  const geminiConfigJson = useMemo(() => {
-    if (!geminiEnabled) return null;
-    const model = models.gemini?.model || "gemini-2.5-pro";
-    return {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: baseUrl,
-        GEMINI_API_KEY: apiKey,
-        GEMINI_MODEL: model,
-      },
-    };
-  }, [geminiEnabled, baseUrl, apiKey, models.gemini]);
-
   // 提交表单
   const handleSubmit = useCallback(() => {
     if (!name.trim() || !baseUrl.trim() || !apiKey.trim()) {
@@ -202,7 +185,7 @@ requires_openai_auth = true`;
           apps: {
             claude: claudeEnabled,
             codex: codexEnabled,
-            gemini: geminiEnabled,
+            gemini: false,
           },
           models,
         }
@@ -219,7 +202,7 @@ requires_openai_auth = true`;
       provider.apps = {
         claude: claudeEnabled,
         codex: codexEnabled,
-        gemini: geminiEnabled,
+        gemini: false,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -237,7 +220,6 @@ requires_openai_auth = true`;
     notes,
     claudeEnabled,
     codexEnabled,
-    geminiEnabled,
     models,
     selectedPreset,
     onSave,
@@ -261,7 +243,7 @@ requires_openai_auth = true`;
           apps: {
             claude: claudeEnabled,
             codex: codexEnabled,
-            gemini: geminiEnabled,
+            gemini: false,
           },
           models,
         }
@@ -278,7 +260,7 @@ requires_openai_auth = true`;
       provider.apps = {
         claude: claudeEnabled,
         codex: codexEnabled,
-        gemini: geminiEnabled,
+        gemini: false,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -295,7 +277,6 @@ requires_openai_auth = true`;
     notes,
     claudeEnabled,
     codexEnabled,
-    geminiEnabled,
     models,
     selectedPreset,
   ]);
@@ -603,7 +584,7 @@ requires_openai_auth = true`;
         </div>
 
         {/* 配置 JSON 预览 */}
-        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled) && (
+        {isEditMode && (claudeEnabled || codexEnabled) && (
           <div className="space-y-4">
             <Label>
               {t("universalProvider.configJsonPreview", {
@@ -644,22 +625,6 @@ requires_openai_auth = true`;
                   value={JSON.stringify(codexConfigJson, null, 2)}
                   onChange={() => {}}
                   height={280}
-                  darkMode={isDarkMode}
-                />
-              </div>
-            )}
-
-            {/* Gemini JSON */}
-            {geminiConfigJson && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <ProviderIcon icon="gemini" name="Gemini" size={16} />
-                  Gemini
-                </div>
-                <JsonEditor
-                  value={JSON.stringify(geminiConfigJson, null, 2)}
-                  onChange={() => {}}
-                  height={140}
                   darkMode={isDarkMode}
                 />
               </div>
