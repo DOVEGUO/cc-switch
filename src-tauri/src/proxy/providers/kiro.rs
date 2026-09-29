@@ -3,7 +3,6 @@
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::proxy::model_mapper::strip_one_m_suffix_for_upstream;
 use crate::proxy::ProxyError;
 
 const SYNTHETIC_ACK: &str = "I will fully incorporate this information when generating my responses, and explicitly acknowledge relevant parts of the summary when answering questions.";
@@ -18,6 +17,38 @@ pub fn runtime_base_url(region: &str) -> String {
     let region = region.trim();
     let region = if region.is_empty() { KIRO_DEFAULT_REGION } else { region };
     format!("https://runtime.{region}.kiro.dev")
+}
+
+fn normalize_kiro_model(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let has_one_m = trimmed.len() >= 4
+        && trimmed[trimmed.len() - 4..].eq_ignore_ascii_case("[1m]");
+    let base = if has_one_m {
+        &trimmed[..trimmed.len() - 4]
+    } else {
+        trimmed
+    };
+    let mapped = match base {
+        "claude-opus-5" => "claude-opus-5",
+        "claude-opus-5-5" => "claude-opus-5.5",
+        "claude-opus-4-8" => "claude-opus-4.8",
+        "claude-opus-4-7" => "claude-opus-4.7",
+        "claude-opus-4-6" => "claude-opus-4.6",
+        "claude-opus-4.5" => "claude-opus-4.5",
+        "claude-sonnet-5" => "claude-sonnet-5",
+        "claude-sonnet-4-6" if has_one_m => "claude-sonnet-4.6-1m",
+        "claude-sonnet-4-6" => "claude-sonnet-4.6",
+        "claude-sonnet-4.5" if has_one_m => "claude-sonnet-4.5-1m",
+        "claude-sonnet-4.5" => "claude-sonnet-4.5",
+        "claude-fable-5-1" => "claude-fable-5.1",
+        "claude-haiku-4.5" => "claude-haiku-4.5",
+        "claude-gpt-5.6-sol" => "gpt-5.6-sol",
+        "claude-gpt-5.6-terra" => "gpt-5.6-terra",
+        "claude-gpt-5.6-luna" => "gpt-5.6-luna",
+        "claude-auto" => "auto",
+        other => other,
+    };
+    mapped.to_string()
 }
 
 fn content_text(content: Option<&Value>) -> String {
@@ -222,11 +253,11 @@ fn effort_from_body(body: &Value) -> Option<String> {
     }).or_else(|| Some("high".to_string()))
 }
 
-pub fn anthropic_to_kiro(body: Value, _session_id: Option<&str>) -> Result<Value, ProxyError> {
+pub fn anthropic_to_kiro(body: Value, session_id: Option<&str>) -> Result<Value, ProxyError> {
     let raw_model = body.get("model").and_then(Value::as_str).ok_or_else(|| {
         ProxyError::TransformError("Kiro request is missing model".to_string())
     })?;
-    let model = strip_one_m_suffix_for_upstream(raw_model).to_string();
+    let model = normalize_kiro_model(raw_model);
     let tools = convert_tools(&body);
     let messages = body
         .get("messages")
@@ -282,7 +313,13 @@ pub fn anthropic_to_kiro(body: Value, _session_id: Option<&str>) -> Result<Value
         current.as_object_mut().unwrap().remove("userInputMessageContext");
     }
 
+    let conversation_id = session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let mut conversation_state = json!({
+        "conversationId": conversation_id,
         "chatTriggerType": "MANUAL",
         "agentTaskType": "vibe",
         "currentMessage": {"userInputMessage": current}
@@ -325,9 +362,19 @@ mod tests {
         });
         let kiro = anthropic_to_kiro(body, None).unwrap();
         assert_eq!(kiro.pointer("/conversationState/currentMessage/userInputMessage/modelId").and_then(Value::as_str), Some("claude-sonnet-5"));
+        assert!(kiro.pointer("/conversationState/conversationId").and_then(Value::as_str).is_some());
         assert_eq!(kiro.pointer("/conversationState/currentMessage/userInputMessage/userInputMessageContext/tools/0/toolSpecification/name").and_then(Value::as_str), Some("read_file"));
         assert_eq!(kiro.pointer("/conversationState/currentMessage/userInputMessage/userInputMessageContext/toolResults/0/toolUseId").and_then(Value::as_str), Some("tool_1"));
         assert!(kiro.pointer("/conversationState/history/0/userInputMessage/content").is_some());
+    }
+
+    #[test]
+    fn normalizes_claude_code_model_ids_for_kiro() {
+        assert_eq!(normalize_kiro_model("claude-opus-5-5"), "claude-opus-5.5");
+        assert_eq!(normalize_kiro_model("claude-opus-5-5[1M]"), "claude-opus-5.5");
+        assert_eq!(normalize_kiro_model("claude-sonnet-4-6"), "claude-sonnet-4.6");
+        assert_eq!(normalize_kiro_model("claude-sonnet-4-6[1m]"), "claude-sonnet-4.6-1m");
+        assert_eq!(normalize_kiro_model("claude-gpt-5.6-sol"), "gpt-5.6-sol");
     }
 
     #[test]
