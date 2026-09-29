@@ -28,10 +28,33 @@ enum KiroEvent {
         cache_write_tokens: u64,
         stop_reason: Option<String>,
     },
+    /// 上游上报的单请求计费量。API Key 模式实测只回 credits
+    /// （`{"usage":0.0149,"unit":"credit"}`），没有逐请求 token。
+    Metering {
+        usage: f64,
+        unit: String,
+    },
     Stop(String),
     ContextUsage(f64),
     Error(String),
     Ignore,
+}
+
+/// 累计 meteringEvent 的 credits，只有 credit 单位参与合计（单复数都算）。
+/// `None` 表示整条响应没出现过 metering 帧，与"出现过但为 0"区分开。
+fn add_metering(acc: &mut Option<f64>, usage: f64, unit: &str) {
+    if unit.eq_ignore_ascii_case("credit") || unit.eq_ignore_ascii_case("credits") {
+        *acc.get_or_insert(0.0) += usage;
+    }
+}
+
+/// Kiro 的钱不是 token 而是 credits/invocation，所以真实消耗只走日志：
+/// 额度重置后把 `[Kiro] metering ... credit=` 逐条相加，与 `GetUsageLimits`
+/// 的 `currentUsage` 增量对照即可验证计费链。不要把 credit 反算成 token。
+fn log_metered_credit(model: &str, credit: Option<f64>) {
+    if let Some(credit) = credit {
+        log::info!("[Kiro] metering model={model} credit={credit:.6}");
+    }
 }
 
 /// API Key responses report credits and `contextUsagePercentage` but no token
@@ -367,20 +390,37 @@ fn decode_event(message_type: &str, event_type: &str, payload: &[u8]) -> KiroEve
                 stop_reason,
             }
         }
-        "meteringEvent" if body.get("inputTokens").is_some_and(Value::is_u64)
-            || body.get("outputTokens").is_some_and(Value::is_u64) => KiroEvent::Usage {
-            input_tokens: body
-                .get("inputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            output_tokens: body
-                .get("outputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            stop_reason: None,
-        },
+        // meteringEvent 有两种形态：API Key 模式实测只回 credits
+        // （{"usage":0.0149,"unit":"credit"}，没有 token 字段），另一种带
+        // inputTokens/outputTokens。credits 是唯一真实计费数据，优先取它；
+        // 同一帧两者都有时也以 credit 为准——逐请求 token 另有 metadataEvent 提供。
+        "meteringEvent" => {
+            if let Some(usage) = body.get("usage").and_then(Value::as_f64) {
+                KiroEvent::Metering {
+                    usage,
+                    unit: body
+                        .get("unit")
+                        .and_then(Value::as_str)
+                        .unwrap_or("credit")
+                        .to_string(),
+                }
+            } else if body.get("inputTokens").is_some_and(Value::is_u64)
+                || body.get("outputTokens").is_some_and(Value::is_u64)
+            {
+                KiroEvent::Usage {
+                    input_tokens: body.get("inputTokens").and_then(Value::as_u64).unwrap_or(0),
+                    output_tokens: body
+                        .get("outputTokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    stop_reason: None,
+                }
+            } else {
+                KiroEvent::Ignore
+            }
+        }
         "contextUsageEvent" => body
             .get("contextUsagePercentage")
             .and_then(Value::as_f64)
@@ -463,6 +503,7 @@ where
         let mut used_tool = false;
         let mut stop_reason = None;
         let mut latest_usage: Option<(u64,u64,u64,u64)> = None;
+        let mut metered_credit: Option<f64> = None;
         let mut estimate = UsageEstimate::default();
         tokio::pin!(stream);
 
@@ -512,6 +553,9 @@ where
                         latest_usage = Some((input_tokens, output_tokens, cache_read_tokens, cache_write_tokens));
                         if reason.is_some() { stop_reason = reason; }
                     }
+                    KiroEvent::Metering { usage, unit } => {
+                        add_metering(&mut metered_credit, usage, &unit);
+                    }
                     KiroEvent::Stop(reason) => stop_reason = Some(reason),
                     KiroEvent::Error(message) => {
                         yield Err(io::Error::other(message));
@@ -548,6 +592,7 @@ where
         if let Some((input, output, cache_read, cache_write)) = latest_usage.or_else(|| estimate.tokens(&model)) {
             yield Ok(usage_chunk(&id, &model, input, output, cache_read, cache_write));
         }
+        log_metered_credit(&model, metered_credit);
         yield Ok(Bytes::from_static(b"data: [DONE]\n\n"));
     }
 }
@@ -559,6 +604,7 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
     let mut reasoning = String::new();
     let mut completed_tools = Vec::new();
     let mut latest_usage: Option<(u64,u64,u64,u64)> = None;
+    let mut metered_credit: Option<f64> = None;
     let mut estimate = UsageEstimate::default();
     let mut stop_reason = None;
 
@@ -573,6 +619,9 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
             KiroEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, stop_reason: reason } => {
                 latest_usage = Some((input_tokens, output_tokens, cache_read_tokens, cache_write_tokens));
                 if reason.is_some() { stop_reason = reason; }
+            }
+            KiroEvent::Metering { usage, unit } => {
+                add_metering(&mut metered_credit, usage, &unit);
             }
             KiroEvent::Stop(reason) => stop_reason = Some(reason),
             KiroEvent::Error(message) => return Err(ProxyError::TransformError(message)),
@@ -625,6 +674,7 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
             }
         });
     }
+    log_metered_credit(model, metered_credit);
     Ok(response)
 }
 
@@ -738,8 +788,10 @@ mod tests {
         assert_eq!(response["usage"]["completion_tokens"], 3);
     }
 
+    /// 估算出的 usage 仍然回给客户端（Claude Code 读它做上下文显示），
+    /// 但 `handlers.rs` 的 `usage_is_estimated_only` 会拦住它、不写通用 Token 用量表。
     #[tokio::test]
-    async fn kiro_stream_emits_estimated_usage_for_the_collector() {
+    async fn kiro_stream_reports_estimated_usage_to_the_client() {
         let chunks: Vec<Result<Bytes, io::Error>> = credit_only_body().chunks(5)
             .map(|part| Ok(Bytes::copy_from_slice(part))).collect();
         let openai = create_openai_sse_stream_from_kiro(futures::stream::iter(chunks), "claude-sonnet-5[1M]".into());
@@ -773,5 +825,56 @@ mod tests {
         let response = eventstream_to_openai_response(&body, "auto").unwrap();
         let anthropic = super::super::transform::openai_to_anthropic(response).unwrap();
         assert_eq!(anthropic["stop_reason"], "max_tokens");
+    }
+
+    /// API Key 模式的 meteringEvent 只带 credits，是唯一真实的计费数据。
+    #[test]
+    fn kiro_metering_event_records_upstream_credit() {
+        // live 采集形态：{"unit":"credit","unitPlural":"credits","usage":0.0149}
+        match decode_event(
+            "event",
+            "meteringEvent",
+            br#"{"unit":"credit","unitPlural":"credits","usage":0.0149}"#,
+        ) {
+            KiroEvent::Metering { usage, unit } => {
+                assert!((usage - 0.0149).abs() < 1e-9);
+                assert_eq!(unit, "credit");
+            }
+            other => panic!("expected metering, got {other:?}"),
+        }
+
+        // 累计：只有 credit 单位计入（单复数、大小写不敏感），其他单位忽略
+        let mut total = None;
+        for (usage, unit) in [(0.0149, "credit"), (1.0, "Credit"), (9.0, "USD"), (0.5, "credits")] {
+            let payload = json!({"usage": usage, "unit": unit}).to_string();
+            match decode_event("event", "meteringEvent", payload.as_bytes()) {
+                KiroEvent::Metering { usage, unit } => add_metering(&mut total, usage, &unit),
+                other => panic!("expected metering, got {other:?}"),
+            }
+        }
+        assert!(
+            (total.expect("two credit frames") - 1.5149).abs() < 1e-9,
+            "{total:?}"
+        );
+
+        // 带 token 的旧形态仍然走 Usage，行为不变
+        assert!(matches!(
+            decode_event("event", "meteringEvent", br#"{"inputTokens":10,"outputTokens":3}"#),
+            KiroEvent::Usage { input_tokens: 10, output_tokens: 3, .. }
+        ));
+        // 两者都没有：Ignore（不把空帧当成 0 credit）
+        assert!(matches!(
+            decode_event("event", "meteringEvent", b"{}"),
+            KiroEvent::Ignore
+        ));
+    }
+
+    /// credit 不能污染回给客户端的 usage——Kiro 的钱是 credits，不是 token。
+    #[test]
+    fn kiro_metering_credit_never_becomes_tokens() {
+        let mut body = frame("meteringEvent", json!({"unit":"credit","usage":12.5}));
+        body.extend(frame("metadataEvent", json!({"stopReason":"END_TURN"})));
+        let response = eventstream_to_openai_response(&body, "claude-sonnet-5").unwrap();
+        assert!(response.get("usage").is_none());
     }
 }

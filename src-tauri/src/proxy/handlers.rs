@@ -316,6 +316,18 @@ struct ClaudeUsageLog {
     is_streaming: bool,
 }
 
+/// Kiro 的 usage 是否只有本地估算：API Key 模式不回传逐请求 token，
+/// `contextUsagePercentage × 窗口` 反推出的是"本次处理的上下文大小"，不是计费口径。
+/// 它一旦落进通用 Token 用量表，就会把整段上下文按 fresh input 计价（成本虚高），
+/// 并把缓存命中率压成 0——而 Kiro 的真实消耗按 credits/invocation 计，走
+/// `kiro_eventstream.rs` 的 `[Kiro] metering ...` 日志与 `GetUsageLimits` 对账。
+///
+/// 注意：这也挡住将来 Kiro 真回传 tokenUsage 的情形。等确认上游确有该形态，
+/// 再按"只放行真实 usage"收窄，不要在没证据前放宽。
+fn usage_is_estimated_only(api_format: &str) -> bool {
+    api_format == "kiro"
+}
+
 fn prepare_claude_usage_log(
     ctx: &RequestContext,
     response: &Value,
@@ -482,7 +494,10 @@ async fn handle_claude_transform(
         };
 
         // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
-        let usage_collector = if usage_logging_enabled(state) {
+        // Kiro 只有估算值，不落通用 Token 用量表（见 usage_is_estimated_only）。
+        let collect_usage =
+            usage_logging_enabled(state) && !usage_is_estimated_only(api_format);
+        let usage_collector = if collect_usage {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
@@ -700,7 +715,7 @@ async fn handle_claude_transform(
         Ok(response) => response,
         Err(error) => {
             log::error!("[Claude] 转换响应失败: {error}");
-            if usage_logging_enabled(state) {
+            if usage_logging_enabled(state) && !usage_is_estimated_only(api_format) {
                 if let Some(log) = raw_usage_response.as_ref().and_then(|response| {
                     prepare_claude_usage_log(ctx, response, status.as_u16(), false)
                 }) {
@@ -716,7 +731,9 @@ async fn handle_claude_transform(
     // 记录使用量
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
     // 在上游缺 stream_options.include_usage 时没有 usage，写入只会产生无意义空行
-    spawn_claude_usage_log(state, ctx, &anthropic_response, status.as_u16(), false);
+    if !usage_is_estimated_only(api_format) {
+        spawn_claude_usage_log(state, ctx, &anthropic_response, status.as_u16(), false);
+    }
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);

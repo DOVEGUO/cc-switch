@@ -15,9 +15,16 @@ fn is_search(tool: &Value) -> bool {
         .is_some_and(|kind| kind.starts_with("web_search_"))
 }
 
+/// 只拦独立搜索子请求。Claude Code 把 WebSearch 当客户端工具用：主循环的工具表里
+/// 它是一个普通工具（没有 `type`），真正要走 Kiro MCP 的是它单独发的那一次请求，
+/// 其 tools 里**只有** `web_search_20250305`。
+///
+/// 这里必须与 `query_and_tool` 的 `tools.len() == 1` 保持一致：只要判据比下游宽，
+/// 任何同时挂着搜索工具和其他工具的请求都会被送进去、再被下游打成 400。
 pub fn has_native_search(body: &Value) -> bool {
-    body.get("tools").and_then(Value::as_array)
-        .is_some_and(|tools| tools.iter().any(is_search))
+    body.get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| tools.len() == 1 && is_search(&tools[0]))
 }
 
 fn invalid(message: &str) -> ProxyError { ProxyError::InvalidRequest(message.into()) }
@@ -231,11 +238,32 @@ mod tests {
         assert_eq!(query_and_tool(&body).unwrap().0, "Kiro docs");
         body["tools"].as_array_mut().unwrap().push(json!({"name":"read_file"}));
         assert!(query_and_tool(&body).is_err());
+        // 混入其他工具后必须交回正常 Kiro 转换，不能再被入口拦成 400
+        assert!(!has_native_search(&body));
         assert!(!has_native_search(&json!({"tools":[{"name":"web_search","input_schema":{}}]})));
         assert_eq!(mcp_url("https://runtime.eu-central-1.kiro.dev").unwrap(), "https://q.eu-central-1.amazonaws.com/mcp");
         for base in ["https://runtime.us-east-1.kiro.dev.evil.test", "http://runtime.us-east-1.kiro.dev", "https://user@runtime.us-east-1.kiro.dev"] {
             assert!(mcp_url(base).is_err());
         }
+    }
+
+    /// 入口判据必须和下游 `query_and_tool` 的 `tools.len() == 1` 一致，否则普通请求
+    /// 只要工具表里挂着搜索工具就会被拦成 400。
+    #[test]
+    fn kiro_search_gate_only_matches_standalone_search_request() {
+        assert!(has_native_search(&request()));
+        // 搜索工具排在第二个
+        assert!(!has_native_search(&json!({"tools":[
+            {"name":"read_file","input_schema":{}},
+            {"type":"web_search_20250305","name":"web_search"}]})));
+        // 两个搜索工具：同样不是「独立搜索子请求」
+        assert!(!has_native_search(&json!({"tools":[
+            {"type":"web_search_20250305","name":"web_search"},
+            {"type":"web_search_20250901","name":"web_search"}]})));
+        assert!(!has_native_search(&json!({"tools":[{"name":"read_file","input_schema":{}}]})));
+        assert!(!has_native_search(&json!({"tools":[]})));
+        assert!(!has_native_search(&json!({"tools":"web_search_20250305"})));
+        assert!(!has_native_search(&json!({})));
     }
 
     #[test]
