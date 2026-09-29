@@ -17,6 +17,8 @@ import _fenno from "./fenno-icon.webp";
 import _fluxa from "./fluxa.png";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
+// Official Kiro brand mark: https://kiro.dev/icon.svg
+import _kiro from "./kiro.svg?url";
 import _nekocode from "./nekocode-icon.png";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
@@ -134,6 +136,7 @@ export const iconUrls: Record<string, string> = {
   fluxa: _fluxa,
   hermes: _hermes,
   huoshan: _huoshan,
+  kiro: _kiro,
   nekocode: _nekocode,
   pateway: _pateway,
   pipellm: _pipellm,
