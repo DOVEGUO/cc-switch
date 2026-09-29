@@ -2,11 +2,6 @@ name: Custom Windows MSI
 
 on:
   workflow_dispatch:
-    inputs:
-      publish_run_id:
-        description: "Publish an existing successful Kiro MSI build as a prerelease (no rebuild)"
-        required: false
-        type: string
   push:
     branches:
       - feat/commandcode
@@ -20,64 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish-existing:
-    if: github.repository == 'DOVEGUO/cc-switch' && github.event_name == 'workflow_dispatch' && inputs.publish_run_id != ''
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - name: Publish existing Kiro MSI
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          BUILD_RUN_ID: ${{ inputs.publish_run_id }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw 'Invalid run ID' }
-          $run = gh api "repos/$env:GH_REPO/actions/runs/$env:BUILD_RUN_ID" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to read build run' }
-          if ($run.conclusion -ne 'success' -or $run.head_branch -ne 'feat/kiro' -or $run.path -ne '.github/workflows/custom-windows.yml') {
-            throw 'Expected a successful Kiro MSI workflow run'
-          }
-          gh run download $env:BUILD_RUN_ID --pattern '*Windows-x64-MSI' --dir artifacts
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to retrieve build artifact' }
-          $files = @(Get-ChildItem artifacts -Recurse -Filter '*.msi')
-          if ($files.Count -ne 1) { throw 'Expected exactly one MSI' }
-          $msi = $files[0]
-          if ($msi.Name -notmatch '-v([0-9]+\.[0-9]+\.[0-9]+)-x64\.msi$') { throw 'Unexpected MSI name' }
-          $version = $Matches[1]
-          $tag = "v$version-kiro-api.$env:BUILD_RUN_ID"
-          $assetPath = Join-Path $msi.DirectoryName "CC-Switch-CommandCode-Kiro-v$version-x64.msi"
-          Move-Item -LiteralPath $msi.FullName -Destination $assetPath
-          $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLower()
-          $notes = @"
-          ## 功能
-
-          - 支持 Command Code 与 Kiro API Key。
-          - Kiro 区域配置及原生模型列表获取。
-          - Anthropic 请求转换为 Kiro 协议，EventStream 响应转换为 Anthropic 格式。
-          - 支持流式响应、工具调用及工具结果回传。
-
-          ## 安装
-
-          Windows x64 每用户 MSI，支持覆盖安装现有 CC Switch。
-
-          SHA-256: $hash
-          "@
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $assetPath
-            if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed' }
-            gh release edit $tag --notes $notes --draft=false
-          } else {
-            gh release create $tag $assetPath --target $run.head_sha --title "CC Switch v$version - Command Code + Kiro" --notes $notes --prerelease --latest=false
-          }
-          if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed' }
-
   build-windows:
-    if: inputs.publish_run_id == ''
     runs-on: windows-2022
     timeout-minutes: 60
 
@@ -95,10 +33,10 @@ jobs:
             throw "Unable to resolve version from package.json"
           }
 
-          $msiName = "CC-Switch-CommandCode-v$version-x64.msi"
-          $artifactName = "CC-Switch-CommandCode-v$version-Windows-x64-MSI"
-          $releaseTag = "v$version-commandcode"
-          $releaseName = "CC Switch v$version - Command Code"
+          $msiName = "CC-Switch-CommandCode-Kiro-v$version-x64.msi"
+          $artifactName = "CC-Switch-CommandCode-Kiro-v$version-Windows-x64-MSI"
+          $releaseTag = "v$version-commandcode-kiro"
+          $releaseName = "CC Switch v$version - Command Code + Kiro"
 
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "msi_name=$msiName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -222,19 +160,17 @@ jobs:
         run: |
           $asset = Join-Path "artifacts" $env:MSI_NAME
           $notes = @"
-          Custom CC Switch based on official v$env:VERSION.
+          ## 功能
 
-          - Native Command Code /alpha/generate support for Claude Code
-          - Command Code Token Plan quota: 5h / weekly / monthly
-          - Reuses the provider API key; canonical api.commandcode.ai only
-          - Go monthly cap $10; GOAT monthly cap $70
-          - 5h/weekly caps use the live API-returned cap; monthly reset uses currentPeriodEnd
-          - Real streaming token usage accounting
-          - Official Command Code provider icon
-          - Yellow-star sponsored presets hidden from Add Provider
-          - UI app set reduced to Claude Code / Claude Desktop / Codex
-          - Windows x64 MSI only
-          - Keeps the official CC Switch product identity / UpgradeCode for in-place MSI upgrades
+          - 支持 Command Code 与 Kiro API Key。
+          - Kiro 区域配置及原生模型列表获取。
+          - Anthropic 请求转换为 Kiro 协议，EventStream 响应转换为 Anthropic 格式。
+          - 支持流式响应、工具调用及工具结果回传。
+          - Command Code Token Plan 配额与用量统计。
+
+          ## 安装
+
+          Windows x64 每用户 MSI，支持覆盖安装现有 CC Switch。
 
           SHA-256:
           $env:MSI_SHA256
