@@ -34,6 +34,7 @@ import {
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { KiroOAuthSection } from "./KiroOAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -105,6 +106,14 @@ interface ClaudeFormFieldsProps {
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
+
+  // Kiro Runtime: API key or managed Builder ID account.
+  isKiroPreset?: boolean;
+  kiroAuthMode?: "api_key" | "oauth";
+  onKiroAuthModeChange?: (mode: "api_key" | "oauth") => void;
+  isKiroOauthAuthenticated?: boolean;
+  selectedKiroAccountId?: string | null;
+  onKiroAccountSelect?: (accountId: string | null) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -187,6 +196,12 @@ export function ClaudeFormFields({
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
+  isKiroPreset,
+  kiroAuthMode = "api_key",
+  onKiroAuthModeChange,
+  isKiroOauthAuthenticated,
+  selectedKiroAccountId,
+  onKiroAccountSelect,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -243,17 +258,17 @@ export function ClaudeFormFields({
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
-    isXaiOauthPreset ? false : hasAnyAdvancedValue,
+    isXaiOauthPreset || isKiroPreset ? false : hasAnyAdvancedValue,
   );
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
-    if (isXaiOauthPreset) {
+    if (isXaiOauthPreset || isKiroPreset) {
       setAdvancedExpanded(false);
     } else if (hasAnyAdvancedValue) {
       setAdvancedExpanded(true);
     }
-  }, [hasAnyAdvancedValue, isXaiOauthPreset]);
+  }, [hasAnyAdvancedValue, isKiroPreset, isXaiOauthPreset]);
 
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
@@ -685,6 +700,51 @@ export function ClaudeFormFields({
         />
       )}
 
+      {isKiroPreset && (
+        <div className="space-y-2">
+          <FormLabel>
+            {t("kiroOauth.authMethod", { defaultValue: "Kiro 认证方式" })}
+          </FormLabel>
+          <Select
+            value={kiroAuthMode}
+            onValueChange={(value) =>
+              onKiroAuthModeChange?.(value as "api_key" | "oauth")
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="api_key">
+                {t("kiroOauth.apiKeyMode", { defaultValue: "Kiro API Key" })}
+              </SelectItem>
+              <SelectItem value="oauth">
+                {t("kiroOauth.builderIdMode", {
+                  defaultValue: "Kiro Builder ID 账号",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {kiroAuthMode === "api_key"
+              ? t("kiroOauth.apiKeyModeHint", {
+                  defaultValue: "使用 ksk_ 开头的 Kiro API Key。",
+                })
+              : t("kiroOauth.builderIdModeHint", {
+                  defaultValue:
+                    "通过 AWS Builder ID 设备码登录，凭据由 CC Switch 托管并自动刷新。",
+                })}
+          </p>
+        </div>
+      )}
+
+      {isKiroPreset && kiroAuthMode === "oauth" && (
+        <KiroOAuthSection
+          selectedAccountId={selectedKiroAccountId}
+          onAccountSelect={onKiroAccountSelect}
+        />
+      )}
+
       {/* API Key 输入框（非 OAuth 预设时显示） */}
       {shouldShowApiKey && !usesOAuth && (
         <ApiKeySection
@@ -753,7 +813,12 @@ export function ClaudeFormFields({
                         defaultValue:
                           "Command Code 使用原生适配，需开启路由接管。",
                       })
-                    : t("providerForm.apiHint")
+                    : apiFormat === "kiro"
+                      ? t("providerForm.apiHintKiro", {
+                          defaultValue:
+                            "Kiro Runtime 使用 conversationState + AWS EventStream，需开启路由接管。",
+                        })
+                      : t("providerForm.apiHint")
           }
           fullUrlHint={
             apiFormat === "gemini_native"
@@ -849,12 +914,17 @@ export function ClaudeFormFields({
                         defaultValue: "Command Code Go（需开启路由）",
                       })}
                     </SelectItem>
+                    <SelectItem value="kiro">
+                      {t("providerForm.apiFormatKiro", {
+                        defaultValue: "Kiro Runtime（需开启路由）",
+                      })}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("providerForm.apiFormatHint", {
                     defaultValue:
-                      "Anthropic 可直连；OpenAI Chat、OpenAI Responses、Gemini Native 与 Command Code 由路由接管完成格式转换或原生适配。",
+                      "Anthropic 可直连；OpenAI Chat、OpenAI Responses、Gemini Native、Command Code 与 Kiro Runtime 由路由接管完成格式转换或原生适配。",
                   })}
                 </p>
               </div>
@@ -953,7 +1023,7 @@ export function ClaudeFormFields({
                     variant="outline"
                     size="sm"
                     onClick={handleModelFetchClick}
-                    disabled={modelFetchLoading}
+                    disabled={modelFetchLoading || isKiroPreset}
                     className="h-7 gap-1"
                   >
                     {modelFetchLoading ? (
@@ -961,7 +1031,9 @@ export function ClaudeFormFields({
                     ) : (
                       <Download className="h-3.5 w-3.5" />
                     )}
-                    {t("providerForm.fetchModels")}
+{isKiroPreset
+                      ? t("kiroOauth.modelsManual", { defaultValue: "手动填写模型" })
+                      : t("providerForm.fetchModels")}
                   </Button>
                 </div>
               </div>
