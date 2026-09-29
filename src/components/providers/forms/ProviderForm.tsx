@@ -115,6 +115,7 @@ import {
   useCopilotAuth,
   useCodexOauth,
   useXaiOauth,
+  useKiroOauth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useSettingsQuery } from "@/lib/query";
@@ -145,11 +146,12 @@ type PresetEntry = {
 
 function getPresetProviderType(
   preset: PresetEntry["preset"] | null | undefined,
-): "github_copilot" | "codex_oauth" | "xai_oauth" | undefined {
+): "github_copilot" | "codex_oauth" | "xai_oauth" | "kiro" | undefined {
   if (!preset || !("providerType" in preset)) return undefined;
   return preset.providerType === "github_copilot" ||
     preset.providerType === "codex_oauth" ||
-    preset.providerType === "xai_oauth"
+    preset.providerType === "xai_oauth" ||
+    preset.providerType === "kiro"
     ? preset.providerType
     : undefined;
 }
@@ -595,6 +597,13 @@ function ProviderFormFull({
     accounts: xaiOauthAccounts,
   } = useXaiOauth();
 
+  const {
+    isAuthenticated: isKiroOauthAuthenticated,
+    isStatusSuccess: isKiroOauthStatusSuccess,
+    isStatusError: isKiroOauthStatusError,
+    accounts: kiroOauthAccounts,
+  } = useKiroOauth();
+
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -609,6 +618,15 @@ function ProviderFormFull({
   const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
+  const [selectedKiroAccountId, setSelectedKiroAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "kiro_oauth"));
+  const [kiroAuthMode, setKiroAuthMode] = useState<"api_key" | "oauth">(() =>
+    initialData?.meta?.authBinding?.source === "managed_account" &&
+    initialData.meta.authBinding.authProvider === "kiro_oauth"
+      ? "oauth"
+      : "api_key",
+  );
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -806,6 +824,10 @@ function ProviderFormFull({
   const isXaiOauthProvider =
     (appId === "claude" || appId === "codex") &&
     (presetProviderType === "xai_oauth" || initialProviderType === "xai_oauth");
+  const isKiroProvider =
+    appId === "claude" &&
+    (presetProviderType === "kiro" || initialProviderType === "kiro");
+  const usesKiroOauth = isKiroProvider && kiroAuthMode === "oauth";
   const wasCodexOfficialManagedOauthBound =
     appId === "codex" &&
     Boolean(resolveManagedAccountId(initialData?.meta, "codex_oauth"));
@@ -1321,6 +1343,30 @@ function ProviderFormFull({
       );
       return;
     }
+    if (usesKiroOauth && isKiroOauthStatusError) {
+      toast.error(
+        t("kiroOauth.statusLoadFailed", {
+          defaultValue: "无法加载 Kiro 账号状态，请重试。",
+        }),
+      );
+      return;
+    }
+    if (usesKiroOauth && !isKiroOauthStatusSuccess) {
+      toast.error(
+        t("kiroOauth.statusLoading", {
+          defaultValue: "正在加载 Kiro 账号状态，请稍后再试。",
+        }),
+      );
+      return;
+    }
+    if (usesKiroOauth && !isKiroOauthAuthenticated) {
+      toast.error(
+        t("kiroOauth.loginRequired", {
+          defaultValue: "请先登录 Kiro Builder ID 账号",
+        }),
+      );
+      return;
+    }
 
     const selectedAccountExists = (
       accountId: string | null,
@@ -1345,6 +1391,11 @@ function ProviderFormFull({
     const selectedXaiAccountIsUsable = (accountId: string | null) =>
       accountId === null ||
       xaiOauthAccounts.some(
+        (account) => account.id === accountId && !account.requires_reauth,
+      );
+    const selectedKiroAccountIsUsable = (accountId: string | null) =>
+      accountId === null ||
+      kiroOauthAccounts.some(
         (account) => account.id === accountId && !account.requires_reauth,
       );
     if (
@@ -1376,6 +1427,17 @@ function ProviderFormFull({
       toast.error(
         t("managedAuth.selectedAccountNeedsReauth", {
           defaultValue: "已绑定 xAI 账号不存在或需要重新登录",
+        }),
+      );
+      return;
+    }
+    if (
+      usesKiroOauth &&
+      !selectedKiroAccountIsUsable(selectedKiroAccountId)
+    ) {
+      toast.error(
+        t("managedAuth.selectedAccountNeedsReauth", {
+          defaultValue: "已绑定 Kiro 账号不存在或需要重新登录",
         }),
       );
       return;
@@ -1431,6 +1493,7 @@ function ProviderFormFull({
           !isCopilotProvider &&
           !isClaudeCodexOauthProvider &&
           !isXaiOauthProvider &&
+          !usesKiroOauth &&
           !apiKey.trim()
         ) {
           issues.push(
@@ -1711,7 +1774,9 @@ function ProviderFormFull({
         ? "codex_oauth"
         : isXaiOauthProvider
           ? "xai_oauth"
-          : undefined;
+          : isKiroProvider
+            ? "kiro"
+            : undefined;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1751,7 +1816,13 @@ function ProviderFormFull({
                   authProvider: "xai_oauth",
                   accountId: selectedXaiAccountId ?? undefined,
                 }
-              : undefined,
+              : usesKiroOauth
+                ? {
+                    source: "managed_account",
+                    authProvider: "kiro_oauth",
+                    accountId: selectedKiroAccountId ?? undefined,
+                  }
+                : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId
@@ -1947,6 +2018,8 @@ function ProviderFormFull({
     setSelectedPresetId(value);
     if (value === "custom") {
       setActivePreset(null);
+      setKiroAuthMode("api_key");
+      setSelectedKiroAccountId(null);
       form.reset(defaultValues);
 
       if (appId === "codex") {
@@ -2102,6 +2175,10 @@ function ProviderFormFull({
     }
 
     const preset = entry.preset as ProviderPreset;
+    if (preset.providerType === "kiro") {
+      setKiroAuthMode("api_key");
+      setSelectedKiroAccountId(null);
+    }
     const config = applyTemplateValues(
       preset.settingsConfig,
       preset.templateValues,
@@ -2378,11 +2455,15 @@ function ProviderFormFull({
               isCopilotPreset={isCopilotProvider}
               isCodexOauthPreset={isClaudeCodexOauthProvider}
               isXaiOauthPreset={isXaiOauthProvider}
+              isKiroPreset={isKiroProvider}
+              kiroAuthMode={kiroAuthMode}
+              onKiroAuthModeChange={setKiroAuthMode}
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
                 isCopilotProvider ||
                 isClaudeCodexOauthProvider ||
-                isXaiOauthProvider
+                isXaiOauthProvider ||
+                usesKiroOauth
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
@@ -2396,6 +2477,9 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
+              isKiroOauthAuthenticated={isKiroOauthAuthenticated}
+              selectedKiroAccountId={selectedKiroAccountId}
+              onKiroAccountSelect={setSelectedKiroAccountId}
               templateValueEntries={templateValueEntries}
               templateValues={templateValues}
               templatePresetName={templatePreset?.name || ""}
