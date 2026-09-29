@@ -166,8 +166,8 @@ jobs:
           - Kiro 区域配置及原生模型列表获取。
           - Anthropic 请求转换为 Kiro 协议，EventStream 响应转换为 Anthropic 格式。
           - 支持流式响应、工具调用及工具结果回传。
-          - Kiro API Key 模式支持 Claude Code 内置 WebSearch。
-          - Kiro 请求计入使用统计（Kiro 不返回 Token 数时按上下文占比估算）。
+          - Kiro API Key 模式支持 Claude Code 内置 WebSearch；仅独立搜索请求走 Kiro MCP，工具表里同时含其他工具的请求不再被误拒。
+          - Kiro 不返回逐请求 Token 数，其用量估算不再计入使用统计（估算值会虚增成本并压低缓存命中率）；本月 Kiro 额度仍在 Token Plan 查看。
           - Command Code 与 Kiro 的 Token Plan 配额查询（Kiro 显示本月 credits 已用/总量与重置时间）。
           - 访问 Kiro 时跟随 Windows 系统代理，无需在 Claude Code settings.json 中配置代理。
 
