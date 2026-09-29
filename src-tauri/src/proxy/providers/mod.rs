@@ -21,6 +21,9 @@ pub mod codex_oauth_auth;
 pub(crate) mod codex_responses_sse;
 pub mod commandcode;
 pub mod copilot_auth;
+pub mod kiro;
+pub mod kiro_auth;
+pub mod kiro_eventstream;
 pub mod copilot_model_map;
 mod gemini;
 pub(crate) mod gemini_schema;
@@ -92,6 +95,8 @@ pub enum ProviderType {
     CodexOAuth,
     /// xAI Grok OAuth（需要 Anthropic ↔ Responses API 转换）
     XaiOAuth,
+    /// Kiro Runtime（AWS EventStream + Kiro conversationState）
+    Kiro,
 }
 
 impl ProviderType {
@@ -106,6 +111,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => true,
             ProviderType::CodexOAuth => true,
             ProviderType::XaiOAuth => true,
+            ProviderType::Kiro => true,
             ProviderType::OpenRouter => false,
             _ => false,
         }
@@ -124,6 +130,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
             ProviderType::CodexOAuth => CHATGPT_CODEX_BASE_URL,
             ProviderType::XaiOAuth => XAI_API_BASE_URL,
+            ProviderType::Kiro => kiro::KIRO_DEFAULT_BASE_URL,
         }
     }
 
@@ -136,6 +143,9 @@ impl ProviderType {
             AppType::Claude | AppType::ClaudeDesktop => {
                 if get_claude_api_format(provider) == "commandcode" {
                     return Some(ProviderType::ClaudeAuth);
+                }
+                if get_claude_api_format(provider) == "kiro" {
+                    return Some(ProviderType::Kiro);
                 }
                 if get_claude_api_format(provider) == "gemini_native" {
                     let adapter = ClaudeAdapter::new();
@@ -230,6 +240,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => "github_copilot",
             ProviderType::CodexOAuth => "codex_oauth",
             ProviderType::XaiOAuth => "xai_oauth",
+            ProviderType::Kiro => "kiro",
         }
     }
 }
@@ -256,6 +267,7 @@ impl std::str::FromStr for ProviderType {
             }
             "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
             "xai_oauth" | "xai-oauth" | "xaioauth" => Ok(ProviderType::XaiOAuth),
+            "kiro" => Ok(ProviderType::Kiro),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -282,7 +294,8 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         | ProviderType::OpenRouter
         | ProviderType::GitHubCopilot
         | ProviderType::CodexOAuth
-        | ProviderType::XaiOAuth => Box::new(ClaudeAdapter::new()),
+        | ProviderType::XaiOAuth
+        | ProviderType::Kiro => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
     }
