@@ -2,6 +2,11 @@ name: Custom Windows MSI
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_run_id:
+        description: "Publish an existing successful Kiro MSI build as a prerelease (no rebuild)"
+        required: false
+        type: string
   push:
     branches:
       - feat/commandcode
@@ -15,7 +20,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  publish-existing:
+    if: github.repository == 'DOVEGUO/cc-switch' && github.event_name == 'workflow_dispatch' && inputs.publish_run_id != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Publish existing Kiro MSI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_RUN_ID: ${{ inputs.publish_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw 'Invalid run ID' }
+          $run = gh api "repos/$env:GH_REPO/actions/runs/$env:BUILD_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read build run' }
+          if ($run.conclusion -ne 'success' -or $run.head_branch -ne 'feat/kiro' -or $run.path -ne '.github/workflows/custom-windows.yml') {
+            throw 'Expected a successful Kiro MSI workflow run'
+          }
+          gh run download $env:BUILD_RUN_ID --pattern '*Windows-x64-MSI' --dir artifacts
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to retrieve build artifact' }
+          $files = @(Get-ChildItem artifacts -Recurse -Filter '*.msi')
+          if ($files.Count -ne 1) { throw 'Expected exactly one MSI' }
+          $msi = $files[0]
+          if ($msi.Name -notmatch '-v([0-9]+\.[0-9]+\.[0-9]+)-x64\.msi$') { throw 'Unexpected MSI name' }
+          $version = $Matches[1]
+          $tag = "v$version-kiro-api.$env:BUILD_RUN_ID"
+          $hash = (Get-FileHash -LiteralPath $msi.FullName -Algorithm SHA256).Hash.ToLower()
+          $notes = @"
+          Kiro API Key preview, retaining Command Code support.
+
+          - Kiro API Key (ksk_), region selection and native model discovery.
+          - Anthropic requests to Kiro; EventStream responses to Anthropic.
+          - Kiro account login / OAuth is disabled in this first phase.
+          - Frontend checks, unit tests, Command Code and Kiro protocol tests passed on GitHub.
+          - Full live API end-to-end regression is not yet complete; this is a test release.
+          - Per-user Windows MSI; existing CC Switch installation identity is retained.
+
+          Build: $($run.html_url)
+          Commit: $($run.head_sha)
+          SHA-256: $hash
+          "@
+          gh release create $tag $msi.FullName --target $run.head_sha --title "CC Switch v$version - Kiro API Key Preview" --notes $notes --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed' }
+
   build-windows:
+    if: inputs.publish_run_id == ''
     runs-on: windows-2022
     timeout-minutes: 60
 
