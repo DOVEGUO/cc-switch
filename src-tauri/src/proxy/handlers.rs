@@ -462,6 +462,16 @@ async fn handle_claude_transform(
                     stream, model,
                 );
             Box::new(Box::pin(create_anthropic_sse_stream(openai_stream)))
+        } else if api_format == "kiro" {
+            let model = ctx
+                .outbound_model
+                .clone()
+                .unwrap_or_else(|| ctx.request_model.clone());
+            let openai_stream =
+                super::providers::kiro_eventstream::create_openai_sse_stream_from_kiro(
+                    stream, model,
+                );
+            Box::new(Box::pin(create_anthropic_sse_stream(openai_stream)))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
@@ -590,6 +600,12 @@ async fn handle_claude_transform(
                     .as_deref()
                     .unwrap_or(ctx.request_model.as_str());
                 super::providers::commandcode::ndjson_to_openai_response(&body_str, model)?
+            } else if api_format == "kiro" {
+                let model = ctx
+                    .outbound_model
+                    .as_deref()
+                    .unwrap_or(ctx.request_model.as_str());
+                super::providers::kiro_eventstream::eventstream_to_openai_response(&body_bytes, model)?
             } else if aggregate_codex_oauth_responses_sse {
                 responses_sse_to_response_value(&body_str)?
             } else {
@@ -2183,7 +2199,7 @@ fn should_use_claude_transform_streaming(
 }
 
 fn should_aggregate_commandcode_ndjson(requested_streaming: bool, api_format: &str) -> bool {
-    !requested_streaming && api_format == "commandcode"
+    !requested_streaming && matches!(api_format, "commandcode" | "kiro")
 }
 
 async fn responses_sse_stream_to_anthropic_message(
