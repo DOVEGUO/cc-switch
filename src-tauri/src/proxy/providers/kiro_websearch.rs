@@ -253,4 +253,26 @@ mod tests {
             assert_eq!(parse_results(value.to_string().as_bytes()).unwrap_err(), "unavailable");
         }
     }
+
+    #[tokio::test]
+    async fn kiro_search_http_contract_uses_api_key_and_rpc() {
+        use axum::{routing::post, Router};
+        let app = Router::new().route("/mcp", post(|headers: axum::http::HeaderMap, Json(body): Json<Value>| async move {
+            assert_eq!(headers["authorization"], "Bearer ksk_test");
+            assert_eq!(headers["tokentype"], "API_KEY");
+            assert!(!headers.contains_key("x-amz-target"));
+            assert_eq!(body["method"], "tools/call");
+            assert_eq!(body["params"]["name"], "web_search");
+            assert_eq!(body["params"]["arguments"]["query"], "Kiro docs");
+            Json(json!({"result":{"content":[{"type":"text","text":
+                json!({"results":[{"title":"Kiro","url":"https://kiro.dev","snippet":"Docs"}]}).to_string()}]}}))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let results = search(&client, &format!("http://{address}/mcp"), "ksk_test", "Kiro docs").await;
+        server.abort();
+        assert_eq!(results.unwrap()[0]["url"], "https://kiro.dev");
+    }
 }
