@@ -1187,6 +1187,16 @@ pub fn run() {
                 log::info!("✓ XaiOAuthManager initialized");
             }
 
+            // 初始化 Kiro OAuthManager (Builder ID Device Code)
+            {
+                use crate::proxy::providers::kiro_auth::KiroOAuthManager;
+                use commands::KiroOAuthState;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                app.manage(KiroOAuthState(Arc::new(KiroOAuthManager::new(app_config_dir))));
+                log::info!("✓ KiroOAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
