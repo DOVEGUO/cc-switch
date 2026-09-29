@@ -92,7 +92,7 @@ fn image_from_anthropic(part: &Value) -> Option<Value> {
         .split_once('/')
         .map(|(_, suffix)| suffix)
         .unwrap_or("png")
-        .replace("jpeg", "jpg");
+        .replace("jpg", "jpeg");
     Some(json!({"format": format, "source": {"bytes": data}}))
 }
 
@@ -337,12 +337,34 @@ pub fn anthropic_to_kiro(
         conversation_state["history"] = Value::Array(history);
     }
     let mut result = json!({"conversationState": conversation_state});
-    if let Some(effort) = effort_from_body(&body) {
-        if model.starts_with("gpt-5.6") {
-            result["additionalModelRequestFields"] = json!({"reasoning": {"effort": effort}});
-        } else {
-            result["additionalModelRequestFields"] = json!({"output_config": {"effort": effort}});
+    // Only these catalog models advertise additionalModelRequestFields. Sending
+    // Claude options to auto/GLM/DeepSeek/etc. makes Runtime reject the request.
+    let adaptive_claude = matches!(model.as_str(), "claude-opus-5.5" | "claude-opus-5" | "claude-sonnet-5"
+        | "claude-opus-4.8" | "claude-opus-4.7" | "claude-opus-4.6" | "claude-sonnet-4.6");
+    let mut extra = Map::new();
+    if model.starts_with("gpt-5.6") {
+        if let Some(effort) = effort_from_body(&body) {
+            extra.insert("reasoning".into(), json!({"effort": effort}));
         }
+    } else if adaptive_claude {
+        if let Some(max_tokens) = body.get("max_tokens").and_then(Value::as_u64) {
+            let ceiling = if model.ends_with("4.6") { 64_000 } else { 128_000 };
+            extra.insert("max_tokens".into(), json!(max_tokens.clamp(1024, ceiling)));
+        }
+        let disabled = body.pointer("/thinking/type").and_then(Value::as_str) == Some("disabled");
+        if body.get("thinking").is_some() {
+            let kind = if disabled && model != "claude-opus-5.5" { "disabled" } else { "adaptive" };
+            extra.insert("thinking".into(), json!({"type": kind}));
+        }
+        if !disabled {
+            if let Some(mut effort) = effort_from_body(&body) {
+                if effort == "xhigh" && model.ends_with("4.6") { effort = "high".into(); }
+                extra.insert("output_config".into(), json!({"effort": effort}));
+            }
+        }
+    }
+    if !extra.is_empty() {
+        result["additionalModelRequestFields"] = Value::Object(extra);
     }
     Ok(result)
 }
@@ -356,6 +378,16 @@ pub fn apply_profile_arn(body: &mut Value, profile_arn: Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserves_jpeg_image_format() {
+        let image = image_from_anthropic(&json!({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": "aGVsbG8="}
+        })).unwrap();
+        assert_eq!(image["format"], "jpeg");
+        assert_eq!(image["source"]["bytes"], "aGVsbG8=");
+    }
 
     #[test]
     fn converts_anthropic_tools_and_tool_results() {
@@ -395,5 +427,15 @@ mod tests {
         let mut body = json!({"conversationState": {}});
         apply_profile_arn(&mut body, Some("arn:aws:codewhisperer:us-east-1:123:profile/test"));
         assert_eq!(body["profileArn"], "arn:aws:codewhisperer:us-east-1:123:profile/test");
+    }
+
+    #[test]
+    fn kiro_only_sends_generation_options_supported_by_the_model() {
+        for model in ["auto", "glm-5", "deepseek-3.2", "minimax-m2.5", "qwen3-coder-next", "claude-haiku-4.5"] {
+            let converted = anthropic_to_kiro(json!({"model":model,"max_tokens":4096,"thinking":{"type":"enabled","budget_tokens":2048},"messages":[{"role":"user","content":"hi"}]}), None, KIRO_ORIGIN_API_KEY).unwrap();
+            assert!(converted.get("additionalModelRequestFields").is_none(), "{model}");
+        }
+        let converted = anthropic_to_kiro(json!({"model":"claude-sonnet-5","max_tokens":4096,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":"hi"}]}), None, KIRO_ORIGIN_API_KEY).unwrap();
+        assert_eq!(converted["additionalModelRequestFields"], json!({"max_tokens":4096,"thinking":{"type":"disabled"}}));
     }
 }

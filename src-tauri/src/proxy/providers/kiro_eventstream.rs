@@ -255,7 +255,7 @@ fn decode_event(message_type: &str, event_type: &str, payload: &[u8]) -> KiroEve
             ))
         }
     };
-    if message_type == "exception" {
+    if matches!(message_type, "exception" | "error") {
         let body = unwrap_event(&value, event_type);
         let message = body
             .get("message")
@@ -574,6 +574,16 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_messages_are_not_silently_ignored() {
+        for message_type in ["exception", "error"] {
+            assert!(matches!(
+                decode_event(message_type, "ServiceUnavailable", br#"{"message":"retry later"}"#),
+                KiroEvent::Error(message) if message == "retry later"
+            ));
+        }
+    }
 
     fn header(name: &str, value: &str) -> Vec<u8> {
         let mut out = vec![name.len() as u8];

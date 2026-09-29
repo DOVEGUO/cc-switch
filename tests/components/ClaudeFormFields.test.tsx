@@ -136,6 +136,11 @@ describe("ClaudeFormFields", () => {
     });
     expect(screen.getByLabelText("Kiro Region")).toHaveValue("eu-central-1");
     fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
+    );
+    fireEvent.click(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     );
     await waitFor(() =>
