@@ -56,12 +56,13 @@ export interface ProviderPreset {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native"
-    | "commandcode";
+    | "commandcode"
+    | "kiro";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth" | "kiro";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -1044,6 +1045,27 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.commandcode.ai"],
     modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     icon: "commandcode",
+  },
+  {
+    name: "Kiro",
+    websiteUrl: "https://kiro.dev",
+    apiKeyUrl: "https://kiro.dev",
+    apiKeyField: "ANTHROPIC_AUTH_TOKEN",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://runtime.us-east-1.kiro.dev",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+      },
+    },
+    category: "third_party",
+    apiFormat: "kiro",
+    providerType: "kiro",
+    endpointCandidates: ["https://runtime.us-east-1.kiro.dev"],
+    icon: "kiro",
   },
   {
     name: "OpenCode Go",
