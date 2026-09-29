@@ -75,6 +75,27 @@ impl Provider {
         self.provider_type() == Some("xai_oauth")
     }
 
+    pub fn is_kiro(&self) -> bool {
+        self.provider_type() == Some("kiro")
+            || self
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.api_format.as_deref())
+                == Some("kiro")
+    }
+
+    pub fn uses_kiro_managed_auth(&self) -> bool {
+        self.is_kiro()
+            && self
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.auth_binding.as_ref())
+                .is_some_and(|binding| {
+                    binding.source == AuthBindingSource::ManagedAccount
+                        && binding.auth_provider.as_deref() == Some("kiro_oauth")
+                })
+    }
+
     pub fn is_github_copilot(&self) -> bool {
         self.provider_type() == Some("github_copilot")
             || self.claude_base_url_contains("githubcopilot.com")
@@ -84,6 +105,7 @@ impl Provider {
         self.is_github_copilot()
             || self.is_codex_oauth()
             || self.is_xai_oauth()
+            || self.uses_kiro_managed_auth()
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
@@ -94,7 +116,7 @@ impl Provider {
     /// in auth.json IS its credential, so the `requires_openai_auth = true`
     /// fallback is its correct shape, never a legacy leftover.
     pub fn uses_proxy_injected_oauth(&self) -> bool {
-        self.is_xai_oauth() || self.is_github_copilot()
+        self.is_xai_oauth() || self.is_github_copilot() || self.uses_kiro_managed_auth()
     }
 
     /// Whether the provider form's "auth field" was explicitly set to
