@@ -8,6 +8,7 @@
 //! - **openai_responses**: OpenAI Responses API 格式，需要 Anthropic ↔ Responses 转换
 //! - **gemini_native**: Google Gemini Native generateContent 格式，需要 Anthropic ↔ Gemini 转换
 //! - **commandcode**: Command Code /alpha/generate 原生适配
+//! - **kiro**: Kiro Runtime conversationState + AWS EventStream
 //!
 //! ## 认证模式
 //! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
@@ -54,6 +55,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
                 "openai_responses" => "openai_responses",
                 "gemini_native" => "gemini_native",
                 "commandcode" => "commandcode",
+                "kiro" => "kiro",
                 _ => "anthropic",
             };
         }
@@ -70,6 +72,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
             "openai_responses" => "openai_responses",
             "gemini_native" => "gemini_native",
             "commandcode" => "commandcode",
+            "kiro" => "kiro",
             _ => "anthropic",
         };
     }
@@ -96,7 +99,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     matches!(
         api_format,
-        "openai_chat" | "openai_responses" | "gemini_native" | "commandcode"
+        "openai_chat" | "openai_responses" | "gemini_native" | "commandcode" | "kiro"
     )
 }
 
@@ -462,6 +465,7 @@ pub fn transform_claude_request_for_api_format(
             session_id,
         ),
         "commandcode" => super::commandcode::anthropic_to_commandcode(body, session_id),
+        "kiro" => super::kiro::anthropic_to_kiro(body, session_id),
         _ => Ok(body),
     }
 }
@@ -487,6 +491,10 @@ impl ClaudeAdapter {
         // Command Code /alpha/generate only accepts Bearer authentication.
         if self.get_api_format(provider) == "commandcode" {
             return ProviderType::ClaudeAuth;
+        }
+
+        if self.get_api_format(provider) == "kiro" {
+            return ProviderType::Kiro;
         }
 
         // 检测 Gemini Native 格式
@@ -790,6 +798,26 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
+        if provider_type == ProviderType::Kiro {
+            let managed = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.auth_binding.as_ref())
+                .is_some_and(|binding| {
+                    binding.source == crate::provider::AuthBindingSource::ManagedAccount
+                        && binding.auth_provider.as_deref() == Some("kiro_oauth")
+                });
+            if managed {
+                return Some(AuthInfo::new(
+                    "kiro_oauth_placeholder".to_string(),
+                    AuthStrategy::KiroOAuth,
+                ));
+            }
+            return self
+                .extract_key(provider)
+                .map(|key| AuthInfo::new(key, AuthStrategy::KiroApiKey));
+        }
+
         let key = self.extract_key(provider)?;
 
         match provider_type {
@@ -927,6 +955,13 @@ impl ProviderAdapter for ClaudeAdapter {
             AuthStrategy::XaiOAuth => {
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
+            AuthStrategy::KiroApiKey => vec![
+                (HeaderName::from_static("authorization"), hv(&bearer)?),
+                (HeaderName::from_static("tokentype"), HeaderValue::from_static("API_KEY")),
+            ],
+            AuthStrategy::KiroOAuth => {
+                vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
+            }
             AuthStrategy::GitHubCopilot => {
                 // 生成请求追踪 ID
                 let request_id = uuid::Uuid::new_v4().to_string();
@@ -998,7 +1033,7 @@ impl ProviderAdapter for ClaudeAdapter {
         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
         matches!(
             self.get_api_format(provider),
-            "openai_chat" | "openai_responses" | "gemini_native" | "commandcode"
+            "openai_chat" | "openai_responses" | "gemini_native" | "commandcode" | "kiro"
         )
     }
 
