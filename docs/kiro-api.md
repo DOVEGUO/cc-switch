@@ -10,7 +10,7 @@
 2. 填入在 Kiro 门户创建的 `ksk_...` 密钥。
 3. 设置密钥对应的 **Kiro Region**，例如 `us-east-1` 或 `eu-central-1`。
 4. 点击获取模型列表，在模型映射中选择服务端返回的原始 `modelId`。
-5. 开启 CC Switch 的 Claude 本地代理接管。需要网络代理时，在 CC Switch 的全局代理设置中配置代理地址。
+5. 开启 CC Switch 的 Claude 本地代理接管。CC Switch 发往 Kiro 的请求自动跟随 Windows 系统代理（若设置了 CC Switch 全局代理，也会跟随该设置），不需要在 Claude Code 的 settings.json 里另外配置代理。
 
 区域保存在供应商的 `ANTHROPIC_BASE_URL`，不引入第二份区域配置：
 
@@ -31,6 +31,12 @@ Kiro AWS EventStream 经 CRC 校验和分片重组后，复用现有 OpenAI → 
 
 Token 用量复用现有采集器。服务端只返回 credits 的事件不伪造 Token 数，也不会清零此前已经收到的 Token 用量。
 
+## 用量
+
+API Key 模式下，Kiro 只回传 credits 与 `contextUsagePercentage`（上下文占用比例），不回传逐请求的 Token 计数。因此 Token 用量按估算展示：`contextUsagePercentage` × 所选模型的输入窗口，加上输出字符数 / 4 估算的输出 Token；Prompt Cache 命中数在该模式下 Kiro 不回传，不作展示。
+
+剩余 credits 通过 配置用量 → Token Plan → Kiro 查看：月度额度、已用/总额度、下次重置时间。查询会自动把供应商的 `ANTHROPIC_BASE_URL`（`https://runtime.<region>.kiro.dev`）换算成对应的 `https://management.<region>.kiro.dev/` 用量端点，无需另外填写凭据。
+
 ## 验证
 
 ### Claude Code WebSearch
@@ -45,6 +51,7 @@ Kiro API Key 模式下，Claude Code 内置 WebSearch 的独立 `web_search_2025
 
 ```powershell
 # KIRO_API_KEY 由调用环境安全提供，勿写进仓库。
+# KIRO_TEST_PROXY 可选：不设置时走系统代理（http_client::init(None)）。
 $env:KIRO_TEST_PROXY = 'http://127.0.0.1:7897'
 $env:KIRO_REGION = 'us-east-1'
 $env:CC_SWITCH_TEST_HOME = Join-Path $env:TEMP 'cc-switch-kiro-live'

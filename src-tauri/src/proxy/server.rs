@@ -450,12 +450,13 @@ mod tests {
     /// Built on GitHub; run the downloaded test executable through a local proxy.
     /// Real credentials stay in the test process and the database is in memory.
     #[tokio::test]
-    #[ignore = "requires KIRO_API_KEY, KIRO_TEST_PROXY and CC_SWITCH_TEST_HOME"]
+    #[ignore = "requires KIRO_API_KEY and CC_SWITCH_TEST_HOME; KIRO_TEST_PROXY optional"]
     async fn kiro_api_live_route() {
         assert!(std::env::var_os("CC_SWITCH_TEST_HOME").is_some(), "Use an isolated test home");
         let key = std::env::var("KIRO_API_KEY").expect("KIRO_API_KEY is required");
-        let network_proxy = std::env::var("KIRO_TEST_PROXY").expect("KIRO_TEST_PROXY is required");
-        super::super::http_client::init(Some(&network_proxy)).unwrap();
+        // KIRO_TEST_PROXY 可选：未设置时走系统/全局代理（None 走系统代理）。
+        let network_proxy = std::env::var("KIRO_TEST_PROXY").ok();
+        super::super::http_client::init(network_proxy.as_deref()).unwrap();
         let region = std::env::var("KIRO_REGION").unwrap_or_else(|_| "us-east-1".into());
         let base = super::super::providers::kiro::runtime_base_url(&region);
         let models = crate::services::model_fetch::fetch_models(&base, &key, false, None, None, Some("kiro"), None).await.unwrap();

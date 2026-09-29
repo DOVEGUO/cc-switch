@@ -60,6 +60,29 @@ describe("detectCodingPlanProvider (Command Code)", () => {
   );
 });
 
+describe("detectCodingPlanProvider (Kiro)", () => {
+  it("matches the canonical https://runtime.<region>.kiro.dev host", () => {
+    expect(detectCodingPlanProvider("https://runtime.us-east-1.kiro.dev")).toBe(
+      "kiro",
+    );
+    expect(
+      detectCodingPlanProvider("https://runtime.us-east-1.kiro.dev/"),
+    ).toBe("kiro");
+    expect(
+      detectCodingPlanProvider("https://runtime.eu-central-1.kiro.dev"),
+    ).toBe("kiro");
+  });
+
+  it.each([
+    "http://runtime.us-east-1.kiro.dev",
+    "https://runtime.us-east-1.kiro.dev.evil.test",
+    "https://proxy.example.com/runtime.us-east-1.kiro.dev",
+    "https://management.us-east-1.kiro.dev",
+  ])("does not treat local/look-alike endpoint %s as Kiro", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
+  });
+});
+
 describe("detectCodingPlanProvider (MiniMax)", () => {
   it.each([
     "https://api.minimax.cn/v1",
@@ -188,6 +211,22 @@ describe("injectCodingPlanUsageScript", () => {
     });
     expect(injected.meta?.usage_script?.apiKey).toBeUndefined();
     expect(injected.meta?.usage_script?.baseUrl).toBeUndefined();
+  });
+
+  it("injects Kiro Token Plan for a claude provider on the runtime host", () => {
+    const injected = inject("claude", {
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://runtime.us-east-1.kiro.dev",
+          ANTHROPIC_AUTH_TOKEN: "ksk_test",
+        },
+      },
+    });
+    expect(injected.meta?.usage_script).toMatchObject({
+      enabled: true,
+      templateType: "token_plan",
+      codingPlanProvider: "kiro",
+    });
   });
 
   it("keeps the existing claude behavior for other coding plans", () => {

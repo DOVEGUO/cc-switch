@@ -102,9 +102,15 @@ async fn search(client: &reqwest::Client, url: &str, key: &str, query: &str) -> 
         .timeout(Duration::from_secs(30))
         .json(&json!({"jsonrpc":"2.0","id":Uuid::new_v4().to_string(),"method":"tools/call",
             "params":{"name":"web_search","arguments":{"query":query}}}))
-        .send().await.map_err(|_| "unavailable")?;
-    if response.status().as_u16() == 429 { return Err("too_many_requests"); }
-    if !response.status().is_success() { return Err("unavailable"); }
+        .send().await.map_err(|error| {
+            log::warn!("[KiroWebSearch] MCP request failed: {error}");
+            "unavailable"
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        log::warn!("[KiroWebSearch] MCP returned HTTP {status}");
+        return Err(if status.as_u16() == 429 { "too_many_requests" } else { "unavailable" });
+    }
     let mut data = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -117,12 +123,20 @@ async fn search(client: &reqwest::Client, url: &str, key: &str, query: &str) -> 
 
 fn parse_results(data: &[u8]) -> Result<Vec<Value>, &'static str> {
     let rpc: Value = serde_json::from_slice(data).map_err(|_| "unavailable")?;
-    if rpc.get("error").is_some() || rpc.pointer("/result/isError").and_then(Value::as_bool) == Some(true) {
+    // Kiro MCP always sends `"error": null` on success.
+    let failed = rpc.get("error").is_some_and(|error| !error.is_null())
+        || rpc.pointer("/result/isError").and_then(Value::as_bool) == Some(true);
+    if failed {
+        log::warn!("[KiroWebSearch] MCP returned a JSON-RPC error");
         return Err("unavailable");
     }
     let text = rpc.pointer("/result/content/0/text").and_then(Value::as_str).ok_or("unavailable")?;
     let result: Value = serde_json::from_str(text).map_err(|_| "unavailable")?;
-    result["results"].as_array().cloned().ok_or("unavailable")
+    let results = result["results"].as_array().cloned();
+    if results.is_none() {
+        log::warn!("[KiroWebSearch] MCP result has no results array");
+    }
+    results.ok_or("unavailable")
 }
 
 fn message(model: &str, query: &str, tool: &Value, results: Result<Vec<Value>, &'static str>) -> Value {
@@ -249,6 +263,10 @@ mod tests {
     fn kiro_search_parses_nested_mcp_and_rejects_errors() {
         let rpc = json!({"result":{"isError":false,"content":[{"type":"text","text":json!({"results":[]}).to_string()}]}});
         assert!(parse_results(rpc.to_string().as_bytes()).unwrap().is_empty());
+        // Live Kiro MCP shape: success responses carry an explicit null error.
+        let live = json!({"error":null,"id":"1","jsonrpc":"2.0","result":{"isError":false,"content":[{"type":"text","text":
+            json!({"results":[{"title":"Kiro","url":"https://kiro.dev/","snippet":"Docs"}],"totalResults":1,"query":"Kiro","error":null}).to_string()}]}});
+        assert_eq!(parse_results(live.to_string().as_bytes()).unwrap()[0]["url"], "https://kiro.dev/");
         for value in [json!({"error":{"message":"secret"}}), json!({"result":{"isError":true}}), json!({})] {
             assert_eq!(parse_results(value.to_string().as_bytes()).unwrap_err(), "unavailable");
         }
@@ -264,7 +282,7 @@ mod tests {
             assert_eq!(body["method"], "tools/call");
             assert_eq!(body["params"]["name"], "web_search");
             assert_eq!(body["params"]["arguments"]["query"], "Kiro docs");
-            Json(json!({"result":{"content":[{"type":"text","text":
+            Json(json!({"error":null,"jsonrpc":"2.0","result":{"isError":false,"content":[{"type":"text","text":
                 json!({"results":[{"title":"Kiro","url":"https://kiro.dev","snippet":"Docs"}]}).to_string()}]}}))
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

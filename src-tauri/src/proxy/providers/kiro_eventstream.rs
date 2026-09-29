@@ -29,8 +29,44 @@ enum KiroEvent {
         stop_reason: Option<String>,
     },
     Stop(String),
+    ContextUsage(f64),
     Error(String),
     Ignore,
+}
+
+/// API Key responses report credits and `contextUsagePercentage` but no token
+/// counts. Estimate from the context share of the model's input window, the
+/// same fallback kirocc uses.
+#[derive(Default)]
+struct UsageEstimate {
+    context_percentage: Option<f64>,
+    output_chars: u64,
+}
+
+impl UsageEstimate {
+    fn record_output(&mut self, text: &str) {
+        self.output_chars += text.chars().count() as u64;
+    }
+
+    fn tokens(&self, model: &str) -> Option<(u64, u64, u64, u64)> {
+        let percentage = self.context_percentage.filter(|p| p.is_finite() && *p > 0.0)?;
+        let output = if self.output_chars == 0 { 0 } else { (self.output_chars / 4).max(1) };
+        let total = (percentage.min(100.0) / 100.0 * context_window(model) as f64).round() as u64;
+        Some((total.saturating_sub(output), output, 0, 0))
+    }
+}
+
+/// `maxInputTokens` from Kiro ListAvailableModels.
+fn context_window(model: &str) -> u64 {
+    let model = super::kiro::normalize_kiro_model(model);
+    match model.as_str() {
+        "claude-opus-4.5" | "claude-sonnet-4.5" | "claude-sonnet-4" | "claude-haiku-4.5" | "glm-5" => 200_000,
+        "deepseek-3.2" => 164_000,
+        "minimax-m2.5" | "minimax-m2.1" => 196_000,
+        "qwen3-coder-next" => 256_000,
+        m if m == "auto" || m.starts_with("claude-") || m.starts_with("gpt-5.6") => 1_000_000,
+        _ => 200_000,
+    }
 }
 
 #[derive(Default)]
@@ -345,6 +381,11 @@ fn decode_event(message_type: &str, event_type: &str, payload: &[u8]) -> KiroEve
             cache_write_tokens: 0,
             stop_reason: None,
         },
+        "contextUsageEvent" => body
+            .get("contextUsagePercentage")
+            .and_then(Value::as_f64)
+            .map(KiroEvent::ContextUsage)
+            .unwrap_or(KiroEvent::Ignore),
         "invalidStateEvent" => {
             let reason = body.get("reason").and_then(Value::as_str).unwrap_or("");
             let message = body
@@ -422,6 +463,7 @@ where
         let mut used_tool = false;
         let mut stop_reason = None;
         let mut latest_usage: Option<(u64,u64,u64,u64)> = None;
+        let mut estimate = UsageEstimate::default();
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
@@ -442,13 +484,18 @@ where
             for event in events {
                 match event {
                     KiroEvent::Text(text) if !text.is_empty() => {
+                        estimate.record_output(&text);
                         yield Ok(openai_chunk(&id, &model, json!({"content": text}), None));
                     }
                     KiroEvent::Reasoning(text) if !text.is_empty() => {
+                        estimate.record_output(&text);
                         yield Ok(openai_chunk(&id, &model, json!({"reasoning_content": text}), None));
                     }
+                    KiroEvent::ContextUsage(percentage) => estimate.context_percentage = Some(percentage),
                     KiroEvent::ToolFragment { id: tool_id, name, input, replace_input, stop } => {
                         for tool in tools.update(tool_id, name, input, replace_input, stop) {
+                            estimate.record_output(&tool.name);
+                            estimate.record_output(&tool.arguments);
                             used_tool = true;
                             let delta = json!({
                                 "tool_calls": [{
@@ -479,6 +526,8 @@ where
             return;
         }
         if let Some(tool) = tools.flush() {
+            estimate.record_output(&tool.name);
+            estimate.record_output(&tool.arguments);
             used_tool = true;
             let delta = json!({
                 "tool_calls": [{
@@ -496,7 +545,7 @@ where
             json!({}),
             Some(finish_reason(stop_reason.as_deref(), used_tool)),
         ));
-        if let Some((input, output, cache_read, cache_write)) = latest_usage {
+        if let Some((input, output, cache_read, cache_write)) = latest_usage.or_else(|| estimate.tokens(&model)) {
             yield Ok(usage_chunk(&id, &model, input, output, cache_read, cache_write));
         }
         yield Ok(Bytes::from_static(b"data: [DONE]\n\n"));
@@ -510,12 +559,14 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
     let mut reasoning = String::new();
     let mut completed_tools = Vec::new();
     let mut latest_usage: Option<(u64,u64,u64,u64)> = None;
+    let mut estimate = UsageEstimate::default();
     let mut stop_reason = None;
 
     for event in decoder.push(body)? {
         match event {
             KiroEvent::Text(value) => text.push_str(&value),
             KiroEvent::Reasoning(value) => reasoning.push_str(&value),
+            KiroEvent::ContextUsage(percentage) => estimate.context_percentage = Some(percentage),
             KiroEvent::ToolFragment { id, name, input, replace_input, stop } => {
                 completed_tools.extend(tools.update(id, name, input, replace_input, stop));
             }
@@ -531,6 +582,12 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
     decoder.finish()?;
     if let Some(tool) = tools.flush() {
         completed_tools.push(tool);
+    }
+    estimate.record_output(&text);
+    estimate.record_output(&reasoning);
+    for tool in &completed_tools {
+        estimate.record_output(&tool.name);
+        estimate.record_output(&tool.arguments);
     }
 
     let mut message = json!({"role": "assistant", "content": text});
@@ -557,7 +614,7 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
         "model": model,
         "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}]
     });
-    if let Some((input, output, cache_read, cache_write)) = latest_usage {
+    if let Some((input, output, cache_read, cache_write)) = latest_usage.or_else(|| estimate.tokens(model)) {
         response["usage"] = json!({
             "prompt_tokens": input,
             "completion_tokens": output,
@@ -647,6 +704,57 @@ mod tests {
         assert_eq!(events[1]["choices"][0]["finish_reason"], "tool_calls");
         assert!(events.iter().all(|event| event.get("usage").is_none()));
         assert!(output.ends_with("data: [DONE]\n\n"));
+    }
+
+    /// API Key responses (captured live) carry only credits and context share.
+    fn credit_only_body() -> Vec<u8> {
+        let mut body = frame("assistantResponseEvent", json!({"content":"OK, done here"}));
+        body.extend(frame("metadataEvent", json!({"stopReason":"END_TURN"})));
+        body.extend(frame("contextUsageEvent", json!({"contextUsagePercentage":0.6481000185012817})));
+        body.extend(frame("meteringEvent", json!({"unit":"credit","unitPlural":"credits","usage":0.0149})));
+        body
+    }
+
+    #[test]
+    fn kiro_estimates_usage_from_context_share_when_tokens_are_absent() {
+        let response = eventstream_to_openai_response(&credit_only_body(), "claude-sonnet-5").unwrap();
+        // 0.6481% of the 1M window, minus 13 chars / 4 of output.
+        assert_eq!(response["usage"]["completion_tokens"], 3);
+        assert_eq!(response["usage"]["prompt_tokens"], 6478);
+        let anthropic = super::super::transform::openai_to_anthropic(response).unwrap();
+        assert_eq!(anthropic["usage"]["input_tokens"], 6478);
+        assert_eq!(anthropic["usage"]["output_tokens"], 3);
+
+        let small_window = eventstream_to_openai_response(&credit_only_body(), "claude-haiku-4.5").unwrap();
+        assert_eq!(small_window["usage"]["prompt_tokens"], 1293);
+    }
+
+    #[test]
+    fn kiro_reported_tokens_win_over_the_estimate() {
+        let mut body = credit_only_body();
+        body.extend(frame("metadataEvent", json!({"tokenUsage":{"uncachedInputTokens":10,"outputTokens":3}})));
+        let response = eventstream_to_openai_response(&body, "claude-sonnet-5").unwrap();
+        assert_eq!(response["usage"]["prompt_tokens"], 10);
+        assert_eq!(response["usage"]["completion_tokens"], 3);
+    }
+
+    #[tokio::test]
+    async fn kiro_stream_emits_estimated_usage_for_the_collector() {
+        let chunks: Vec<Result<Bytes, io::Error>> = credit_only_body().chunks(5)
+            .map(|part| Ok(Bytes::copy_from_slice(part))).collect();
+        let openai = create_openai_sse_stream_from_kiro(futures::stream::iter(chunks), "claude-sonnet-5[1M]".into());
+        let anthropic = super::super::streaming::create_anthropic_sse_stream(openai);
+        tokio::pin!(anthropic);
+        let mut output = String::new();
+        while let Some(chunk) = anthropic.next().await {
+            output.push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
+        }
+        let events: Vec<Value> = output.lines().filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|line| serde_json::from_str(line).ok()).collect();
+        let usage = crate::proxy::usage::parser::TokenUsage::from_claude_stream_events(&events)
+            .expect("collector sees billable usage");
+        assert_eq!(usage.input_tokens, 6478);
+        assert_eq!(usage.output_tokens, 3);
     }
 
     #[test]

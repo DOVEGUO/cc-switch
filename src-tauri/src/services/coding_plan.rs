@@ -1,7 +1,8 @@
 //! Token Plan / 编程套餐额度查询服务
 //!
-//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go
-//! 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
+//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、
+//! Command Code、Kiro 的套餐额度查询。复用 subscription 模块的
+//! SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
@@ -28,6 +29,9 @@ enum CodingPlanProvider {
     /// Command Code。只允许 canonical `https://api.commandcode.ai`，
     /// 不探测 localhost / 本地代理 / 第三方镜像。
     CommandCode,
+    /// Kiro。base_url 形如 `https://runtime.<region>.kiro.dev`，用量查询走
+    /// 独立的 management 域名（见 `query_kiro`）。
+    Kiro,
 }
 
 fn commandcode_is_canonical_base(base_url: &str) -> bool {
@@ -39,9 +43,33 @@ fn commandcode_is_canonical_base(base_url: &str) -> bool {
         && parsed.port_or_known_default() == Some(443)
 }
 
+/// Kiro 推理域名判定：`https://runtime.<region>.kiro.dev`，region 为纯小写
+/// 字母/数字/短横线，不允许端口或 userinfo（与 `model_fetch::kiro_management_url`
+/// 的校验一致，避免 `runtime.us-east-1.kiro.dev.evil.test` 之类的伪造后缀）。
+fn kiro_is_runtime_base(base_url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(base_url) else {
+        return false;
+    };
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() || parsed.port().is_some() {
+        return false;
+    }
+    parsed
+        .host_str()
+        .and_then(|host| host.strip_prefix("runtime."))
+        .and_then(|host| host.strip_suffix(".kiro.dev"))
+        .is_some_and(|region| {
+            !region.is_empty()
+                && region
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
+
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
     let url = base_url.to_lowercase();
-    if url.contains("api.kimi.com/coding") {
+    if kiro_is_runtime_base(base_url) {
+        Some(CodingPlanProvider::Kiro)
+    } else if url.contains("api.kimi.com/coding") {
         Some(CodingPlanProvider::Kimi)
     } else if url.contains("open.bigmodel.cn") || url.contains("bigmodel.cn") {
         Some(CodingPlanProvider::ZhipuCn)
@@ -930,6 +958,176 @@ async fn query_commandcode(api_key: &str) -> Result<SubscriptionQuota, String> {
     })
 }
 
+// ── Kiro ────────────────────────────────────────────────────
+//
+// Kiro API Key 模式只回 credits 与 context 占比，没有独立的用量/余额查询
+// 端点在推理域名上——`GetUsageLimits` 必须打到 management 域名（runtime 域名会
+// 回 UnknownOperationException）。复用 `model_fetch::kiro_management_url`
+// 做 region 提取与 host 校验，不在这里重复一份。
+
+/// 把 Kiro `nextDateReset`（epoch 秒的 JSON 浮点数，如 `1790812800.0`）转换为
+/// ISO 8601。不能用 `extract_reset_time`——它靠 `as_i64` 取整数，JSON 浮点值
+/// 会直接返回 None。
+fn kiro_reset_time(value: &serde_json::Value) -> Option<String> {
+    let secs = parse_f64(value)?;
+    if !secs.is_finite() || secs <= 0.0 {
+        return None;
+    }
+    millis_to_iso8601((secs * 1000.0).round() as i64)
+}
+
+/// 限额展示：整数额度不带小数点（`1000` 而非 `1000.0`），非整数原样格式化。
+fn format_kiro_limit(limit: f64) -> String {
+    if limit.is_finite() && limit.fract() == 0.0 {
+        format!("{}", limit as i64)
+    } else {
+        format!("{limit}")
+    }
+}
+
+/// 解析 `GetUsageLimits` 响应为 `SubscriptionQuota`。
+///
+/// 只展示一个月度 tier（`TIER_MONTHLY`）：Kiro credits 是单一月度额度，没有
+/// 5 小时/周窗口。取 `usageBreakdownList` 里 `resourceType == "CREDIT"` 的条目，
+/// 没有该类型时退回第一条；`usageLimit` 缺失或 <=0 视为无法展示用量，返回
+/// `None` 由调用方报错，而不是渲染一张空 tier 的卡片。
+fn parse_kiro_quota(body: &serde_json::Value) -> Option<SubscriptionQuota> {
+    let entry = body
+        .get("usageBreakdownList")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|item| item.get("resourceType").and_then(|v| v.as_str()) == Some("CREDIT"))
+                .or_else(|| arr.first())
+        })?;
+
+    let used = entry
+        .get("currentUsageWithPrecision")
+        .and_then(parse_f64)
+        .or_else(|| entry.get("currentUsage").and_then(parse_f64))
+        .unwrap_or(0.0);
+    let limit = entry
+        .get("usageLimitWithPrecision")
+        .and_then(parse_f64)
+        .or_else(|| entry.get("usageLimit").and_then(parse_f64))?;
+
+    if !limit.is_finite() || limit <= 0.0 {
+        return None;
+    }
+
+    let utilization = ((used / limit) * 100.0).clamp(0.0, 100.0);
+    let resets_at = entry
+        .get("nextDateReset")
+        .and_then(kiro_reset_time)
+        .or_else(|| body.get("nextDateReset").and_then(kiro_reset_time));
+
+    let tiers = vec![QuotaTier {
+        name: TIER_MONTHLY.to_string(),
+        utilization,
+        resets_at,
+        used_value_usd: None,
+        max_value_usd: None,
+    }];
+
+    let subscription_title = body
+        .pointer("/subscriptionInfo/subscriptionTitle")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Kiro");
+    let mut label = format!(
+        "{subscription_title} · {used:.2}/{} credits",
+        format_kiro_limit(limit)
+    );
+    if let Some(overage) = entry
+        .get("currentOveragesWithPrecision")
+        .and_then(parse_f64)
+        .filter(|v| *v > 0.0)
+    {
+        label.push_str(&format!(" (+{overage:.2} overage)"));
+    }
+
+    Some(SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: Some(label),
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    })
+}
+
+async fn query_kiro(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
+    let api_key = api_key.trim();
+    if !api_key.starts_with("ksk_") {
+        return Ok(coding_plan_not_found(
+            "Kiro usage query needs a Kiro API key (ksk_...)",
+        ));
+    }
+
+    let url = match crate::services::model_fetch::kiro_management_url(base_url) {
+        Ok(url) => url,
+        Err(e) => return Ok(make_error(e)),
+    };
+
+    let client = crate::proxy::http_client::get();
+    let resp = client
+        .post(&url)
+        .bearer_auth(api_key)
+        .header("tokentype", "API_KEY")
+        .header("content-type", "application/x-amz-json-1.0")
+        .header("x-amz-target", "AmazonCodeWhispererService.GetUsageLimits")
+        .json(&serde_json::json!({"origin": "AI_EDITOR"}))
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid Kiro API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        });
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!(
+            "API error (HTTP {status}): {}",
+            body.chars().take(500).collect::<String>()
+        )));
+    }
+
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    match parse_kiro_quota(&body) {
+        Some(quota) => Ok(quota),
+        None => Ok(make_error(
+            "Unexpected Kiro usage response shape".to_string(),
+        )),
+    }
+}
+
 // ── OpenCode Go ─────────────────────────────────────────────
 
 /// 解析 OpenCode Go usage 端点响应为 tier 列表。
@@ -1685,6 +1883,7 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
         CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
         CodingPlanProvider::CommandCode => query_commandcode(api_key).await,
+        CodingPlanProvider::Kiro => query_kiro(base_url, api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
@@ -1696,7 +1895,7 @@ pub async fn get_coding_plan_quota(
 mod tests {
     use super::{
         commandcode_is_canonical_base, detect_provider, parse_afp_tiers, parse_coding_plan_tiers,
-        parse_commandcode_tiers, parse_minimax_tiers, parse_opencode_go_tiers,
+        parse_commandcode_tiers, parse_kiro_quota, parse_minimax_tiers, parse_opencode_go_tiers,
         parse_zhipu_token_tiers, query_zhipu_team_at, volcengine_canonical_query,
         volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
         volcengine_sign, zhipu_quota_base, CodingPlanProvider, TIER_FIVE_HOUR, TIER_MONTHLY,
@@ -2797,5 +2996,150 @@ mod tests {
         assert_eq!(quota.tiers[0].utilization, 26.0);
         assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
         assert_eq!(quota.tiers[1].utilization, 5.0);
+    }
+
+    // ── Kiro ──
+
+    #[test]
+    fn kiro_detects_only_canonical_runtime_host() {
+        for base_url in [
+            "https://runtime.us-east-1.kiro.dev",
+            "https://runtime.us-east-1.kiro.dev/",
+            "https://runtime.eu-central-1.kiro.dev",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::Kiro)
+            ));
+        }
+
+        for base_url in [
+            "http://runtime.us-east-1.kiro.dev",
+            "http://localhost:15721",
+            "https://runtime.us-east-1.kiro.dev.evil.test",
+            "https://proxy.example.com/runtime.us-east-1.kiro.dev",
+            "https://management.us-east-1.kiro.dev",
+        ] {
+            assert!(!matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::Kiro)
+            ));
+        }
+    }
+
+    #[test]
+    fn kiro_parses_sample_usage_limits_response() {
+        let body = json!({
+            "nextDateReset": 1790812800.0,
+            "overageConfiguration": {"overageStatus": "DISABLED"},
+            "subscriptionInfo": {
+                "overageCapability": "OVERAGE_CAPABLE",
+                "subscriptionManagementTarget": "MANAGE",
+                "subscriptionTitle": "KIRO PRO",
+                "type": "Q_DEVELOPER_STANDALONE_PRO",
+                "upgradeCapability": "UPGRADE_CAPABLE"
+            },
+            "usageBreakdownList": [{
+                "bonuses": [],
+                "currency": "USD",
+                "currentOverages": 0,
+                "currentOveragesWithPrecision": 0.0,
+                "currentUsage": 212,
+                "currentUsageWithPrecision": 212.15,
+                "displayName": "Credit",
+                "displayNamePlural": "Credits",
+                "nextDateReset": 1790812800.0,
+                "overageCap": 10000,
+                "overageCapWithPrecision": 10000.0,
+                "overageCharges": 0.0,
+                "overageCredits": [],
+                "overageRate": 0.04,
+                "resourceType": "CREDIT",
+                "unit": "INVOCATIONS",
+                "usageLimit": 1000,
+                "usageLimitWithPrecision": 1000.0
+            }],
+            "userInfo": {"userId": "redacted"}
+        });
+
+        let quota = parse_kiro_quota(&body).expect("should parse sample response");
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 1);
+        assert_eq!(quota.tiers[0].name, TIER_MONTHLY);
+        assert!((quota.tiers[0].utilization - 21.215).abs() < 1e-9);
+        assert_eq!(
+            quota.tiers[0].resets_at.as_deref(),
+            Some("2026-10-01T00:00:00+00:00")
+        );
+        assert_eq!(
+            quota.credential_message.as_deref(),
+            Some("KIRO PRO · 212.15/1000 credits")
+        );
+    }
+
+    #[test]
+    fn kiro_appends_overage_to_label_when_present() {
+        let body = json!({
+            "subscriptionInfo": {"subscriptionTitle": "KIRO PRO"},
+            "usageBreakdownList": [{
+                "resourceType": "CREDIT",
+                "currentUsageWithPrecision": 1005.5,
+                "usageLimitWithPrecision": 1000.0,
+                "currentOveragesWithPrecision": 5.5
+            }]
+        });
+        let quota = parse_kiro_quota(&body).expect("should parse");
+        assert_eq!(
+            quota.credential_message.as_deref(),
+            Some("KIRO PRO · 1005.50/1000 credits (+5.50 overage)")
+        );
+        // 已用超出限额也不裁剪到 100 以上；这里只验证不 panic 且被 clamp 到 100。
+        assert_eq!(quota.tiers[0].utilization, 100.0);
+    }
+
+    #[test]
+    fn kiro_missing_credit_entry_returns_none() {
+        let body = json!({
+            "subscriptionInfo": {"subscriptionTitle": "KIRO PRO"},
+            "usageBreakdownList": []
+        });
+        assert!(parse_kiro_quota(&body).is_none());
+
+        let body_no_list = json!({"subscriptionInfo": {"subscriptionTitle": "KIRO PRO"}});
+        assert!(parse_kiro_quota(&body_no_list).is_none());
+    }
+
+    #[test]
+    fn kiro_zero_or_missing_limit_returns_none() {
+        let body = json!({
+            "usageBreakdownList": [{
+                "resourceType": "CREDIT",
+                "currentUsageWithPrecision": 10.0,
+                "usageLimitWithPrecision": 0.0
+            }]
+        });
+        assert!(parse_kiro_quota(&body).is_none());
+
+        let body_no_limit = json!({
+            "usageBreakdownList": [{
+                "resourceType": "CREDIT",
+                "currentUsageWithPrecision": 10.0
+            }]
+        });
+        assert!(parse_kiro_quota(&body_no_limit).is_none());
+    }
+
+    #[test]
+    fn kiro_falls_back_to_first_entry_when_no_credit_type() {
+        let body = json!({
+            "subscriptionInfo": {"subscriptionTitle": "KIRO PRO"},
+            "usageBreakdownList": [{
+                "resourceType": "SOMETHING_ELSE",
+                "currentUsageWithPrecision": 25.0,
+                "usageLimitWithPrecision": 100.0
+            }]
+        });
+        let quota = parse_kiro_quota(&body).expect("should fall back to first entry");
+        assert_eq!(quota.tiers[0].utilization, 25.0);
     }
 }

@@ -166,7 +166,7 @@ pub async fn fetch_models(
     ))
 }
 
-fn kiro_management_url(base_url: &str) -> Result<String, String> {
+pub(crate) fn kiro_management_url(base_url: &str) -> Result<String, String> {
     let url = reqwest::Url::parse(base_url).map_err(|_| "Invalid Kiro endpoint".to_string())?;
     let region = url.host_str().and_then(|host| host.strip_prefix("runtime."))
         .and_then(|host| host.strip_suffix(".kiro.dev"))

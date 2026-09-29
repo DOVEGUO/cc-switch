@@ -21,7 +21,7 @@ pub fn runtime_base_url(region: &str) -> String {
     format!("https://runtime.{region}.kiro.dev")
 }
 
-fn normalize_kiro_model(raw: &str) -> String {
+pub(crate) fn normalize_kiro_model(raw: &str) -> String {
     let trimmed = raw.trim();
     let has_one_m = trimmed.len() >= 4
         && trimmed.get(trimmed.len() - 4..).is_some_and(|suffix| suffix.eq_ignore_ascii_case("[1m]"));

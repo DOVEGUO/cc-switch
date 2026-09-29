@@ -21,7 +21,8 @@ export interface CodingPlanProviderEntry {
     | "zenmux"
     | "volcengine"
     | "opencode_go"
-    | "commandcode";
+    | "commandcode"
+    | "kiro";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -84,6 +85,13 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "opencode_go",
     label: "OpenCode Go",
     pattern: /opencode\.ai\/zen\/go/i,
+  },
+  {
+    // Kiro。base_url 是推理域名 https://runtime.<region>.kiro.dev；用量查询走
+    // 独立的 management 域名（后端 query_kiro 内部转换），这里只做检测。
+    id: "kiro",
+    label: "Kiro",
+    pattern: /^https:\/\/runtime\.[a-z0-9-]+\.kiro\.dev(?:\/|$)/i,
   },
 ] as const;
 
