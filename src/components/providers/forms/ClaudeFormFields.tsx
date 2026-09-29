@@ -244,17 +244,17 @@ export function ClaudeFormFields({
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
-    isXaiOauthPreset ? false : hasAnyAdvancedValue,
+    isXaiOauthPreset || isKiro ? false : hasAnyAdvancedValue,
   );
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
-    if (isXaiOauthPreset) {
+    if (isXaiOauthPreset || isKiro) {
       setAdvancedExpanded(false);
     } else if (hasAnyAdvancedValue) {
       setAdvancedExpanded(true);
     }
-  }, [hasAnyAdvancedValue, isXaiOauthPreset]);
+  }, [hasAnyAdvancedValue, isKiro, isXaiOauthPreset]);
 
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
@@ -803,12 +803,7 @@ export function ClaudeFormFields({
                         defaultValue:
                           "Command Code 使用原生适配，需开启路由接管。",
                       })
-                    : apiFormat === "kiro"
-                      ? t("providerForm.apiHintKiro", {
-                          defaultValue:
-                            "Kiro Runtime 使用 conversationState + AWS EventStream，需开启路由接管。",
-                        })
-                      : t("providerForm.apiHint")
+                    : t("providerForm.apiHint")
           }
           fullUrlHint={
             apiFormat === "gemini_native"
