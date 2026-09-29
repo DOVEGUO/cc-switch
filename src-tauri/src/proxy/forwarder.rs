@@ -2131,6 +2131,7 @@ impl RequestForwarder {
             if key_str.eq_ignore_ascii_case("authorization")
                 || key_str.eq_ignore_ascii_case("x-api-key")
                 || key_str.eq_ignore_ascii_case("x-goog-api-key")
+                || (is_kiro && key_str.eq_ignore_ascii_case("tokentype"))
             {
                 // Codex official account cards deliberately keep credentials
                 // out of provider storage. `requires_openai_auth = true` makes

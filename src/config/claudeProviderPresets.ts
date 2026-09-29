@@ -1044,7 +1044,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Kiro",
     websiteUrl: "https://kiro.dev",
-    apiKeyUrl: "https://kiro.dev",
+    apiKeyUrl: "https://app.kiro.dev/",
     apiKeyField: "ANTHROPIC_AUTH_TOKEN",
     settingsConfig: {
       env: {
@@ -1053,7 +1053,7 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_MODEL: "claude-sonnet-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5.5",
       },
     },
     category: "third_party",

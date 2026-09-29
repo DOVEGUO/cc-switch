@@ -286,6 +286,12 @@ export function ClaudeFormFields({
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const modelFetchRequestRef = useRef(0);
+  useEffect(() => {
+    modelFetchRequestRef.current += 1;
+    setFetchedModels([]);
+    setIsFetchingModels(false);
+  }, [baseUrl, apiKey, isKiroPreset]);
 
   const showModelFetchResult = useCallback(
     (count: number) => {
@@ -315,17 +321,38 @@ export function ClaudeFormFields({
     const modelsUrl = matchedPreset?.modelsUrl;
 
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl, customUserAgent)
+    const request = ++modelFetchRequestRef.current;
+    fetchModelsForConfig(
+      baseUrl,
+      apiKey,
+      isFullUrl,
+      modelsUrl,
+      customUserAgent,
+      isKiroPreset ? { apiFormat: "kiro" } : undefined,
+    )
       .then((models) => {
+        if (request !== modelFetchRequestRef.current) return;
         setFetchedModels(models);
         showModelFetchResult(models.length);
       })
       .catch((err) => {
+        if (request !== modelFetchRequestRef.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
-      .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, isFullUrl, customUserAgent, showModelFetchResult, t]);
+      .finally(() => {
+        if (request === modelFetchRequestRef.current)
+          setIsFetchingModels(false);
+      });
+  }, [
+    baseUrl,
+    apiKey,
+    isFullUrl,
+    customUserAgent,
+    isKiroPreset,
+    showModelFetchResult,
+    t,
+  ]);
 
   const handleFetchCopilotModels = useCallback(() => {
     if (!isCopilotAuthenticated) {
@@ -757,6 +784,40 @@ export function ClaudeFormFields({
       )}
 
       {/* 模板变量输入 */}
+      {isKiroPreset && kiroAuthMode === "api_key" && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="kiro-region">
+            {t("kiroApi.region", "Kiro Region")}
+          </FormLabel>
+          <Input
+            id="kiro-region"
+            list="kiro-regions"
+            value={
+              /^https:\/\/runtime\.([a-z0-9-]+)\.kiro\.dev\/?$/.exec(
+                baseUrl,
+              )?.[1] ?? ""
+            }
+            placeholder="us-east-1"
+            pattern="[a-z0-9]+(-[a-z0-9]+)+"
+            required
+            onChange={(event) =>
+              onBaseUrlChange(
+                `https://runtime.${event.target.value.trim()}.kiro.dev`,
+              )
+            }
+          />
+          <datalist id="kiro-regions">
+            <option value="us-east-1" />
+            <option value="eu-central-1" />
+          </datalist>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              "kiroApi.regionHint",
+              "选择 API Key 对应的区域；模型列表和请求均使用此区域。",
+            )}
+          </p>
+        </div>
+      )}
       {templateValueEntries.length > 0 && (
         <div className="space-y-3">
           <FormLabel>
@@ -792,7 +853,7 @@ export function ClaudeFormFields({
       )}
 
       {/* Base URL 输入框 */}
-      {shouldShowSpeedTest && (
+      {shouldShowSpeedTest && !isKiroPreset && (
         <EndpointField
           id="baseUrl"
           label={t("providerForm.apiEndpoint")}
@@ -1021,7 +1082,10 @@ export function ClaudeFormFields({
                     variant="outline"
                     size="sm"
                     onClick={handleModelFetchClick}
-                    disabled={modelFetchLoading || isKiroPreset}
+                    disabled={
+                      modelFetchLoading ||
+                      (isKiroPreset && kiroAuthMode === "oauth")
+                    }
                     className="h-7 gap-1"
                   >
                     {modelFetchLoading ? (
@@ -1029,11 +1093,7 @@ export function ClaudeFormFields({
                     ) : (
                       <Download className="h-3.5 w-3.5" />
                     )}
-                    {isKiroPreset
-                      ? t("kiroOauth.modelsManual", {
-                          defaultValue: "手动填写模型",
-                        })
-                      : t("providerForm.fetchModels")}
+                    {t("providerForm.fetchModels")}
                   </Button>
                 </div>
               </div>

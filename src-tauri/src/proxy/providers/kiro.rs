@@ -38,9 +38,7 @@ fn normalize_kiro_model(raw: &str) -> String {
         "claude-opus-4-6" => "claude-opus-4.6",
         "claude-opus-4.5" => "claude-opus-4.5",
         "claude-sonnet-5" => "claude-sonnet-5",
-        "claude-sonnet-4-6" if has_one_m => "claude-sonnet-4.6-1m",
         "claude-sonnet-4-6" => "claude-sonnet-4.6",
-        "claude-sonnet-4.5" if has_one_m => "claude-sonnet-4.5-1m",
         "claude-sonnet-4.5" => "claude-sonnet-4.5",
         "claude-fable-5-1" => "claude-fable-5.1",
         "claude-haiku-4.5" => "claude-haiku-4.5",
@@ -385,8 +383,11 @@ mod tests {
         assert_eq!(normalize_kiro_model("claude-opus-5-5"), "claude-opus-5.5");
         assert_eq!(normalize_kiro_model("claude-opus-5-5[1M]"), "claude-opus-5.5");
         assert_eq!(normalize_kiro_model("claude-sonnet-4-6"), "claude-sonnet-4.6");
-        assert_eq!(normalize_kiro_model("claude-sonnet-4-6[1m]"), "claude-sonnet-4.6-1m");
+        assert_eq!(normalize_kiro_model("claude-sonnet-4-6[1m]"), "claude-sonnet-4.6");
         assert_eq!(normalize_kiro_model("claude-gpt-5.6-sol"), "gpt-5.6-sol");
+        for id in ["deepseek-3.2", "minimax-m2.5", "glm-5", "qwen3-coder-next", "future-model", "模型名称"] {
+            assert_eq!(normalize_kiro_model(id), id);
+        }
     }
 
     #[test]

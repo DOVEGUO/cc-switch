@@ -35,6 +35,9 @@ const REASONING_VENDOR_HINTS: &[&str] = &["deepseek", "mimo", "xiaomimimo"];
 /// 供 handler/forwarder 外部使用的公开函数。
 /// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
 pub fn get_claude_api_format(provider: &Provider) -> &'static str {
+    if provider.is_kiro() {
+        return "kiro";
+    }
     // 0) Managed Responses OAuth providers force their wire protocol. This is
     // an invariant, not a preset default: editable metadata must not be able to
     // send an Anthropic Messages body to a Responses-only upstream.

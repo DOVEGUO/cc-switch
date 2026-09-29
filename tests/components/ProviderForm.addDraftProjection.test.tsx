@@ -141,9 +141,7 @@ describe("新增对话框的草稿投影", () => {
     renderForm("codex", bases);
 
     let base = await nextBase(bases, 0);
-    await waitFor(() =>
-      expect(editorTexts()).toContain(String(base!.config)),
-    );
+    await waitFor(() => expect(editorTexts()).toContain(String(base!.config)));
 
     const preset = codexProviderPresets.find(
       (item) => item.category !== "official" && item.name === "Nvidia",
@@ -152,17 +150,13 @@ describe("新增对话框的草稿投影", () => {
     clickPreset(preset.name);
     base = await nextBase(bases, seen);
     expect(String(base!.config)).toContain(LIVE_TOML.trim());
-    await waitFor(() =>
-      expect(editorTexts()).toContain(String(base!.config)),
-    );
+    await waitFor(() => expect(editorTexts()).toContain(String(base!.config)));
 
     seen = bases.length;
     clickPreset("providerPreset.custom");
     base = await nextBase(bases, seen);
     expect(String(base!.config)).not.toContain("nvidia");
-    await waitFor(() =>
-      expect(editorTexts()).toContain(String(base!.config)),
-    );
+    await waitFor(() => expect(editorTexts()).toContain(String(base!.config)));
   });
 
   it("Gemini：选预设、切回自定义后，全局设置仍在显示内容和底里", async () => {
@@ -171,7 +165,7 @@ describe("新增对话框的草稿投影", () => {
     await nextBase(bases, 0);
 
     const preset = geminiProviderPresets.find(
-      (item) => item.category !== "official",
+      (item) => item.category !== "official" && !item.isPartner,
     )!;
     let seen = bases.length;
     clickPreset(preset.name);
@@ -198,13 +192,11 @@ describe("新增对话框的草稿投影", () => {
     renderForm("grokbuild", bases);
     await nextBase(bases, 0);
 
-    const preset = grokBuildProviderPresets[0];
+    const preset = grokBuildProviderPresets.find((item) => !item.isPartner)!;
     const seen = bases.length;
     clickPreset(preset.nameKey ?? preset.name);
     const base = await nextBase(bases, seen);
-    await waitFor(() =>
-      expect(editorTexts()).toContain(String(base!.config)),
-    );
+    await waitFor(() => expect(editorTexts()).toContain(String(base!.config)));
 
     fireEvent.click(screen.getByRole("button", { name: /Grok Official/ }));
     await waitFor(() => expect(bases.at(-1)).toBeNull());

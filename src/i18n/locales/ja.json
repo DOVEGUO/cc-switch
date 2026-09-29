@@ -1,4 +1,8 @@
 {
+  "kiroApi": {
+    "region": "Kiro Region",
+    "regionHint": "API キーのリージョンを指定します。モデル一覧とリクエストに同じリージョンを使用します。"
+  },
   "app": {
     "title": "CC Switch",
     "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"

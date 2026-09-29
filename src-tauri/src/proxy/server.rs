@@ -447,6 +447,74 @@ mod tests {
     use serde_json::{json, Value};
     use tokio::sync::Mutex;
 
+    /// Built on GitHub; run the downloaded test executable through a local proxy.
+    /// Real credentials stay in the test process and the database is in memory.
+    #[tokio::test]
+    #[ignore = "requires KIRO_API_KEY, KIRO_TEST_PROXY and CC_SWITCH_TEST_HOME"]
+    async fn kiro_api_live_route() {
+        assert!(std::env::var_os("CC_SWITCH_TEST_HOME").is_some(), "Use an isolated test home");
+        let key = std::env::var("KIRO_API_KEY").expect("KIRO_API_KEY is required");
+        let network_proxy = std::env::var("KIRO_TEST_PROXY").expect("KIRO_TEST_PROXY is required");
+        super::super::http_client::init(Some(&network_proxy)).unwrap();
+        let region = std::env::var("KIRO_REGION").unwrap_or_else(|_| "us-east-1".into());
+        let base = super::super::providers::kiro::runtime_base_url(&region);
+        let models = crate::services::model_fetch::fetch_models(&base, &key, false, None, None, Some("kiro"), None).await.unwrap();
+        assert!(!models.is_empty(), "Kiro returned no models");
+        println!("Discovered {} models in {region}", models.len());
+        let selected = std::env::var("KIRO_TEST_MODELS").ok();
+        let db = Arc::new(Database::memory().unwrap());
+        let mut provider = Provider::with_id("kiro-live".into(), "Kiro live test".into(), json!({
+            "env": {"ANTHROPIC_BASE_URL": base, "ANTHROPIC_AUTH_TOKEN": key}
+        }), None);
+        provider.meta = Some(ProviderMeta { api_format: Some("kiro".into()), provider_type: Some("kiro".into()), ..Default::default() });
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", &provider.id).unwrap();
+        let proxy = ProxyServer::new(ProxyConfig { listen_port: 0, non_streaming_timeout: 120, ..Default::default() }, db, None);
+        let info = proxy.start().await.unwrap();
+        let client = reqwest::Client::builder().no_proxy().timeout(std::time::Duration::from_secs(150)).build().unwrap();
+        let endpoint = format!("http://127.0.0.1:{}/v1/messages", info.port);
+        let mut failures = Vec::new();
+        for (index, model) in models.iter().filter(|model| selected.as_ref().is_none_or(|list| list.split(',').any(|id| id == model.id))).enumerate() {
+            let streaming = index % 2 == 0;
+            let response = client.post(&endpoint).header("x-api-key", "local-test")
+                .json(&json!({"model": model.id, "max_tokens": 1024, "stream": streaming,
+                    "system": "Be concise.", "messages": [{"role":"user","content":"Reply only OK."}]}))
+                .send().await.unwrap();
+            let status = response.status();
+            let body = response.text().await.unwrap();
+            let ok = if streaming {
+                status.is_success() && body.contains("event: message_stop") && body.contains("text_delta") && !body.contains("event: error")
+            } else {
+                let value: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                status.is_success() && value["type"] == "message" && value["content"].as_array().is_some_and(|blocks| !blocks.is_empty())
+            };
+            println!("{} {} stream={streaming} HTTP {status}", if ok { "PASS" } else { "FAIL" }, model.id);
+            if !ok { failures.push(format!("{}: {}", model.id, crate::redact_known_secrets_strict(&body, &[key.clone()]))); }
+        }
+        let mut request = json!({"model":"auto","max_tokens":1024,"stream":false,
+            "tools":[{"name":"echo","description":"Return the input text","input_schema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}],
+            "messages":[{"role":"user","content":"Call echo with text OK. Do not answer without calling the tool."}]});
+        let response = client.post(&endpoint).json(&request).send().await.unwrap();
+        assert!(response.status().is_success(), "tool request failed: {}", response.status());
+        let message: Value = response.json().await.unwrap();
+        assert_eq!(message["stop_reason"], "tool_use");
+        let tool = message["content"].as_array().unwrap().iter().find(|block| block["type"] == "tool_use").expect("tool_use block");
+        assert_eq!(tool["name"], "echo");
+        assert_eq!(tool["input"]["text"], "OK");
+        request["messages"].as_array_mut().unwrap().extend([
+            json!({"role":"assistant","content":message["content"]}),
+            json!({"role":"user","content":[{"type":"tool_result","tool_use_id":tool["id"],"content":"OK"},{"type":"text","text":"Now reply OK without calling more tools."}]})
+        ]);
+        request["stream"] = json!(true);
+        let response = client.post(&endpoint).json(&request).send().await.unwrap();
+        assert!(response.status().is_success(), "tool result request failed: {}", response.status());
+        let stream = response.text().await.unwrap();
+        assert!(stream.contains("event: message_stop") && !stream.contains("event: error"));
+        println!("PASS tool invocation and streaming tool-result round trip");
+        proxy.stop().await.unwrap();
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     #[derive(Debug)]
     struct CapturedRequest {
         path_and_query: String,

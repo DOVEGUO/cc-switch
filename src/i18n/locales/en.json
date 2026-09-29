@@ -1,4 +1,8 @@
 {
+  "kiroApi": {
+    "region": "Kiro Region",
+    "regionHint": "Choose the region for your API key. Both model discovery and requests use this region."
+  },
   "app": {
     "title": "CC Switch",
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"

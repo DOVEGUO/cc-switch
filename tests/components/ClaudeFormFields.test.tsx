@@ -122,6 +122,40 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
   });
 
 describe("ClaudeFormFields", () => {
+  it("fetches native Kiro model IDs using the selected region", async () => {
+    const onBaseUrlChange = vi.fn();
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      isKiroPreset: true,
+      kiroAuthMode: "api_key",
+      apiKey: "ksk_test",
+      baseUrl: "https://runtime.eu-central-1.kiro.dev",
+      apiFormat: "kiro",
+      onBaseUrlChange,
+    });
+    expect(screen.getByLabelText("Kiro Region")).toHaveValue("eu-central-1");
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await waitFor(() =>
+      expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
+        "https://runtime.eu-central-1.kiro.dev",
+        "ksk_test",
+        false,
+        undefined,
+        "",
+        { apiFormat: "kiro" },
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("Kiro Region"), {
+      target: { value: "us-east-1" },
+    });
+    expect(onBaseUrlChange).toHaveBeenCalledWith(
+      "https://runtime.us-east-1.kiro.dev",
+    );
+  });
+
   beforeEach(() => {
     copilotApiMock.copilotGetModels.mockResolvedValue([]);
     copilotApiMock.copilotGetModelsForAccount.mockResolvedValue([]);

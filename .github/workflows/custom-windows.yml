@@ -103,6 +103,14 @@ jobs:
           CC_SWITCH_TEST_HOME: ${{ runner.temp }}/cc-switch-tests
         run: cargo test kiro --lib
 
+      - name: Upload precompiled API route tests
+        if: github.ref_name == 'feat/kiro'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kiro-API-route-tests-windows-x64
+          path: src-tauri/target/debug/deps/cc_switch_lib-*.exe
+          if-no-files-found: error
+
       - name: Build Windows x64 MSI
         shell: pwsh
         run: |

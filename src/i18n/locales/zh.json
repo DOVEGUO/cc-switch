@@ -1,4 +1,8 @@
 {
+  "kiroApi": {
+    "region": "Kiro Region",
+    "regionHint": "选择 API Key 对应的区域；模型列表和请求均使用此区域。"
+  },
   "app": {
     "title": "CC Switch",
     "description": "Claude Code / Codex / Gemini CLI 全方位辅助工具"

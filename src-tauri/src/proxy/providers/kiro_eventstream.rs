@@ -26,7 +26,9 @@ enum KiroEvent {
         output_tokens: u64,
         cache_read_tokens: u64,
         cache_write_tokens: u64,
+        stop_reason: Option<String>,
     },
+    Stop(String),
     Error(String),
     Ignore,
 }
@@ -300,6 +302,11 @@ fn decode_event(message_type: &str, event_type: &str, payload: &[u8]) -> KiroEve
         }
         "metadataEvent" => {
             let usage = body.get("tokenUsage").unwrap_or(body);
+            let stop_reason = body.get("stopReason").and_then(Value::as_str).map(str::to_string);
+            if !["uncachedInputTokens", "cacheReadInputTokens", "cacheWriteInputTokens", "outputTokens"]
+                .iter().any(|key| usage.get(*key).is_some_and(Value::is_u64)) {
+                return stop_reason.map(KiroEvent::Stop).unwrap_or(KiroEvent::Ignore);
+            }
             let uncached = usage
                 .get("uncachedInputTokens")
                 .and_then(Value::as_u64)
@@ -321,9 +328,11 @@ fn decode_event(message_type: &str, event_type: &str, payload: &[u8]) -> KiroEve
                 output_tokens: output,
                 cache_read_tokens: cache_read,
                 cache_write_tokens: cache_write,
+                stop_reason,
             }
         }
-        "meteringEvent" => KiroEvent::Usage {
+        "meteringEvent" if body.get("inputTokens").is_some_and(Value::is_u64)
+            || body.get("outputTokens").is_some_and(Value::is_u64) => KiroEvent::Usage {
             input_tokens: body
                 .get("inputTokens")
                 .and_then(Value::as_u64)
@@ -334,6 +343,7 @@ fn decode_event(message_type: &str, event_type: &str, payload: &[u8]) -> KiroEve
                 .unwrap_or(0),
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            stop_reason: None,
         },
         "invalidStateEvent" => {
             let reason = body.get("reason").and_then(Value::as_str).unwrap_or("");
@@ -360,6 +370,15 @@ fn openai_chunk(id: &str, model: &str, delta: Value, finish_reason: Option<&str>
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]
     });
     Bytes::from(format!("data: {}\n\n", payload))
+}
+
+fn finish_reason(reason: Option<&str>, used_tool: bool) -> &'static str {
+    match reason {
+        Some("MAX_TOKENS" | "max_tokens" | "MAX_OUTPUT_TOKENS") => "length",
+        Some("TOOL_USE" | "tool_use") => "tool_calls",
+        _ if used_tool => "tool_calls",
+        _ => "stop",
+    }
 }
 
 fn usage_chunk(
@@ -401,6 +420,7 @@ where
         let mut decoder = Decoder::default();
         let mut tools = ToolAccumulator::default();
         let mut used_tool = false;
+        let mut stop_reason = None;
         let mut latest_usage: Option<(u64,u64,u64,u64)> = None;
         tokio::pin!(stream);
 
@@ -441,9 +461,11 @@ where
                             yield Ok(openai_chunk(&id, &model, delta, None));
                         }
                     }
-                    KiroEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } => {
+                    KiroEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, stop_reason: reason } => {
                         latest_usage = Some((input_tokens, output_tokens, cache_read_tokens, cache_write_tokens));
+                        if reason.is_some() { stop_reason = reason; }
                     }
+                    KiroEvent::Stop(reason) => stop_reason = Some(reason),
                     KiroEvent::Error(message) => {
                         yield Err(io::Error::other(message));
                         return;
@@ -472,7 +494,7 @@ where
             &id,
             &model,
             json!({}),
-            Some(if used_tool { "tool_calls" } else { "stop" }),
+            Some(finish_reason(stop_reason.as_deref(), used_tool)),
         ));
         if let Some((input, output, cache_read, cache_write)) = latest_usage {
             yield Ok(usage_chunk(&id, &model, input, output, cache_read, cache_write));
@@ -488,6 +510,7 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
     let mut reasoning = String::new();
     let mut completed_tools = Vec::new();
     let mut latest_usage: Option<(u64,u64,u64,u64)> = None;
+    let mut stop_reason = None;
 
     for event in decoder.push(body)? {
         match event {
@@ -496,9 +519,11 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
             KiroEvent::ToolFragment { id, name, input, replace_input, stop } => {
                 completed_tools.extend(tools.update(id, name, input, replace_input, stop));
             }
-            KiroEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } => {
+            KiroEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, stop_reason: reason } => {
                 latest_usage = Some((input_tokens, output_tokens, cache_read_tokens, cache_write_tokens));
+                if reason.is_some() { stop_reason = reason; }
             }
+            KiroEvent::Stop(reason) => stop_reason = Some(reason),
             KiroEvent::Error(message) => return Err(ProxyError::TransformError(message)),
             KiroEvent::Ignore => {}
         }
@@ -524,7 +549,7 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
             message["content"] = Value::Null;
         }
     }
-    let finish_reason = if message.get("tool_calls").is_some() { "tool_calls" } else { "stop" };
+    let finish_reason = finish_reason(stop_reason.as_deref(), message.get("tool_calls").is_some());
     let mut response = json!({
         "id": format!("chatcmpl-{}", Uuid::new_v4()),
         "object": "chat.completion",
@@ -582,10 +607,53 @@ mod tests {
         body.extend(frame("toolUseEvent", json!({"toolUseId":"t1","name":"read","input":"{\"path\":\"a\"}"})));
         body.extend(frame("toolUseEvent", json!({"toolUseId":"t1","stop":true})));
         body.extend(frame("metadataEvent", json!({"tokenUsage":{"uncachedInputTokens":10,"cacheReadInputTokens":4,"cacheWriteInputTokens":2,"outputTokens":3}})));
+        body.extend(frame("metadataEvent", json!({"stopReason":"TOOL_USE"})));
+        body.extend(frame("meteringEvent", json!({"unit":"credit","usage":0.02})));
         let response = eventstream_to_openai_response(&body, "claude-sonnet-5").unwrap();
         assert_eq!(response["choices"][0]["message"]["content"], "hello");
         assert_eq!(response["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "read");
         assert_eq!(response["usage"]["prompt_tokens"], 16);
         assert_eq!(response["usage"]["completion_tokens"], 3);
+    }
+
+    #[tokio::test]
+    async fn kiro_stream_preserves_fragmented_tool_arguments() {
+        let mut body = frame("toolUseEvent", json!({"toolUseId":"t1","name":"echo"}));
+        body.extend(frame("toolUseEvent", json!({"toolUseId":"t1","input":"{\"text\":"})));
+        body.extend(frame("toolUseEvent", json!({"toolUseId":"t1","input":"\"OK\"}"})));
+        body.extend(frame("toolUseEvent", json!({"toolUseId":"t1","stop":true})));
+        body.extend(frame("meteringEvent", json!({"unit":"credit","usage":0.02})));
+        let chunks: Vec<Result<Bytes, io::Error>> = body.chunks(7)
+            .map(|part| Ok(Bytes::copy_from_slice(part))).collect();
+        let stream = create_openai_sse_stream_from_kiro(futures::stream::iter(chunks), "auto".into());
+        tokio::pin!(stream);
+        let mut output = String::new();
+        while let Some(chunk) = stream.next().await {
+            output.push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
+        }
+        let events: Vec<Value> = output.lines().filter_map(|line| line.strip_prefix("data: "))
+            .filter(|line| *line != "[DONE]").map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(events[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"], "{\"text\":\"OK\"}");
+        assert_eq!(events[1]["choices"][0]["finish_reason"], "tool_calls");
+        assert!(events.iter().all(|event| event.get("usage").is_none()));
+        assert!(output.ends_with("data: [DONE]\n\n"));
+    }
+
+    #[test]
+    fn kiro_rejects_corrupt_or_truncated_frames() {
+        let mut body = frame("assistantResponseEvent", json!({"content":"hello"}));
+        let last = body.len() - 1;
+        assert!(eventstream_to_openai_response(&body[..last], "auto").is_err());
+        body[last] ^= 1;
+        assert!(eventstream_to_openai_response(&body, "auto").is_err());
+    }
+
+    #[test]
+    fn kiro_preserves_output_limit_stop_reason() {
+        let mut body = frame("assistantResponseEvent", json!({"content":"partial"}));
+        body.extend(frame("metadataEvent", json!({"stopReason":"MAX_TOKENS"})));
+        let response = eventstream_to_openai_response(&body, "auto").unwrap();
+        let anthropic = super::super::transform::openai_to_anthropic(response).unwrap();
+        assert_eq!(anthropic["stop_reason"], "max_tokens");
     }
 }

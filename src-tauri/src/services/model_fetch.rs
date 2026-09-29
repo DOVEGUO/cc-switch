@@ -89,6 +89,9 @@ pub async fn fetch_models(
     api_format: Option<&str>,
     request_headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<FetchedModel>, String> {
+    if api_format == Some("kiro") {
+        return fetch_kiro_models(base_url, api_key).await;
+    }
     let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
     let headers =
         build_model_fetch_headers(api_key, api_format, user_agent.as_ref(), request_headers)?;
@@ -161,6 +164,70 @@ pub async fn fetch_models(
         "All candidates failed: {}",
         last_err.unwrap_or_else(|| "no candidates".to_string())
     ))
+}
+
+fn kiro_management_url(base_url: &str) -> Result<String, String> {
+    let url = reqwest::Url::parse(base_url).map_err(|_| "Invalid Kiro endpoint".to_string())?;
+    let region = url.host_str().and_then(|host| host.strip_prefix("runtime."))
+        .and_then(|host| host.strip_suffix(".kiro.dev"))
+        .filter(|region| !region.is_empty() && region.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+        .ok_or_else(|| "Expected https://runtime.<region>.kiro.dev".to_string())?;
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return Err("Expected an HTTPS Kiro regional endpoint".into());
+    }
+    Ok(format!("https://management.{region}.kiro.dev/"))
+}
+
+async fn fetch_kiro_models(base_url: &str, api_key: &str) -> Result<Vec<FetchedModel>, String> {
+    let api_key = api_key.trim();
+    if !api_key.starts_with("ksk_") {
+        return Err("Kiro API Key must start with ksk_".into());
+    }
+    let url = kiro_management_url(base_url)?;
+    let client = crate::proxy::http_client::get();
+    let mut models = BTreeMap::new();
+    let mut seen_tokens = std::collections::HashSet::new();
+    let mut body = serde_json::json!({"origin": "AI_EDITOR"});
+    for _ in 0..100 {
+        let response = client.post(&url).bearer_auth(api_key)
+            .header("tokentype", "API_KEY")
+            .header("x-amz-target", "AmazonCodeWhispererService.ListAvailableModels")
+            .header("content-type", "application/x-amz-json-1.0")
+            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS)).json(&body)
+            .send().await.map_err(|error| format!("Request failed: {error}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let detail = redact_model_fetch_error_body(response.text().await.unwrap_or_default(), &[api_key.to_string()]);
+            return Err(format!("HTTP {status}: {detail}"));
+        }
+        let page: serde_json::Value = response.json().await.map_err(|error| format!("Failed to parse response: {error}"))?;
+        let entries = page.get("models").and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "Failed to parse Kiro models response".to_string())?;
+        for entry in entries.iter().chain(page.get("defaultModel")) {
+            if let Some(id) = entry.get("modelId").and_then(serde_json::Value::as_str).filter(|id| !id.is_empty()) {
+                models.insert(id.to_string(), FetchedModel { id: id.to_string(), owned_by: Some("Kiro".into()) });
+            }
+        }
+        let next = page.get("nextToken").and_then(serde_json::Value::as_str).filter(|value| !value.is_empty());
+        let Some(next) = next else { return Ok(models.into_values().collect()); };
+        if !seen_tokens.insert(next.to_string()) {
+            return Err("Kiro models response repeated a pagination token".into());
+        }
+        body["nextToken"] = serde_json::json!(next);
+    }
+    Err("Kiro models pagination limit exceeded".into())
+}
+
+#[cfg(test)]
+mod kiro_tests {
+    use super::*;
+
+    #[test]
+    fn kiro_models_use_the_selected_region_and_reject_untrusted_hosts() {
+        assert_eq!(kiro_management_url("https://runtime.eu-central-1.kiro.dev").unwrap(), "https://management.eu-central-1.kiro.dev/");
+        assert!(kiro_management_url("https://runtime.us-east-1.kiro.dev.evil.test").is_err());
+        assert!(kiro_management_url("http://runtime.us-east-1.kiro.dev").is_err());
+    }
 }
 
 fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> String {
