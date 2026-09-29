@@ -12,6 +12,8 @@ pub const KIRO_DEFAULT_BASE_URL: &str = "https://runtime.us-east-1.kiro.dev";
 pub const KIRO_TARGET: &str = "AmazonCodeWhispererStreamingService.GenerateAssistantResponse";
 pub const KIRO_USER_AGENT: &str = "aws-sdk-rust/1.3.15 ua/2.1 api/codewhispererstreaming/0.1.17593 os/windows lang/rust/1.92.0 md/appVersion-2.10.0 app/AmazonQ-For-CLI";
 pub const KIRO_AMZ_USER_AGENT: &str = "aws-sdk-rust/1.3.15 ua/2.1 api/codewhispererstreaming/0.1.17593 os/windows lang/rust/1.92.0 m/F app/AmazonQ-For-CLI";
+pub const KIRO_ORIGIN_API_KEY: &str = "AI_EDITOR";
+pub const KIRO_ORIGIN_OAUTH: &str = "KIRO_CLI";
 
 pub fn runtime_base_url(region: &str) -> String {
     let region = region.trim();
@@ -22,7 +24,7 @@ pub fn runtime_base_url(region: &str) -> String {
 fn normalize_kiro_model(raw: &str) -> String {
     let trimmed = raw.trim();
     let has_one_m = trimmed.len() >= 4
-        && trimmed[trimmed.len() - 4..].eq_ignore_ascii_case("[1m]");
+        && trimmed.get(trimmed.len() - 4..).is_some_and(|suffix| suffix.eq_ignore_ascii_case("[1m]"));
     let base = if has_one_m {
         &trimmed[..trimmed.len() - 4]
     } else {
@@ -115,7 +117,7 @@ fn tool_result_text(content: Option<&Value>) -> String {
     }
 }
 
-fn user_parts(message: &Value, model: &str, include_tools: Option<&[Value]>) -> Value {
+fn user_parts(message: &Value, model: &str, include_tools: Option<&[Value]>, origin: &str) -> Value {
     let mut text = String::new();
     let mut results = Vec::new();
     let mut images = Vec::new();
@@ -153,7 +155,7 @@ fn user_parts(message: &Value, model: &str, include_tools: Option<&[Value]>) -> 
     let mut user = json!({
         "content": text,
         "modelId": model,
-        "origin": "KIRO_CLI"
+        "origin": origin
     });
     if !images.is_empty() {
         user["images"] = Value::Array(images);
@@ -210,8 +212,8 @@ fn assistant_history(message: &Value) -> Value {
     json!({"assistantResponseMessage": response})
 }
 
-fn history_user(message: &Value, model: &str) -> Value {
-    json!({"userInputMessage": user_parts(message, model, None)})
+fn history_user(message: &Value, model: &str, origin: &str) -> Value {
+    json!({"userInputMessage": user_parts(message, model, None, origin)})
 }
 
 fn convert_tools(body: &Value) -> Vec<Value> {
@@ -253,11 +255,20 @@ fn effort_from_body(body: &Value) -> Option<String> {
     }).or_else(|| Some("high".to_string()))
 }
 
-pub fn anthropic_to_kiro(body: Value, session_id: Option<&str>) -> Result<Value, ProxyError> {
+pub fn anthropic_to_kiro(
+    body: Value,
+    session_id: Option<&str>,
+    origin: &str,
+) -> Result<Value, ProxyError> {
     let raw_model = body.get("model").and_then(Value::as_str).ok_or_else(|| {
         ProxyError::TransformError("Kiro request is missing model".to_string())
     })?;
     let model = normalize_kiro_model(raw_model);
+    let origin = if origin.trim().is_empty() {
+        KIRO_ORIGIN_OAUTH
+    } else {
+        origin
+    };
     let tools = convert_tools(&body);
     let messages = body
         .get("messages")
@@ -268,7 +279,7 @@ pub fn anthropic_to_kiro(body: Value, session_id: Option<&str>) -> Result<Value,
     let mut history = Vec::new();
     let system = system_text(body.get("system"));
     if !system.trim().is_empty() {
-        history.push(json!({"userInputMessage": {"content": system, "origin": "KIRO_CLI"}}));
+        history.push(json!({"userInputMessage": {"content": system, "origin": origin}}));
         history.push(json!({"assistantResponseMessage": {
             "messageId": Uuid::new_v4().to_string(),
             "content": SYNTHETIC_ACK
@@ -288,12 +299,12 @@ pub fn anthropic_to_kiro(body: Value, session_id: Option<&str>) -> Result<Value,
     for (index, message) in messages.iter().enumerate() {
         let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
         if Some(index) == current_index && index == messages.len().saturating_sub(1) {
-            current_message = Some(user_parts(message, &model, Some(&tools)));
+            current_message = Some(user_parts(message, &model, Some(&tools), origin));
             continue;
         }
         match role {
             "assistant" => history.push(assistant_history(message)),
-            "user" => history.push(history_user(message, &model)),
+            "user" => history.push(history_user(message, &model, origin)),
             _ => {}
         }
     }
@@ -301,7 +312,7 @@ pub fn anthropic_to_kiro(body: Value, session_id: Option<&str>) -> Result<Value,
     let mut current = current_message.unwrap_or_else(|| json!({
         "content": "Continue",
         "modelId": model,
-        "origin": "KIRO_CLI",
+        "origin": origin,
         "userInputMessageContext": if tools.is_empty() { Value::Null } else { json!({"tools": tools}) }
     }));
     if current.get("content").and_then(Value::as_str).unwrap_or("").is_empty()
@@ -360,8 +371,9 @@ mod tests {
                 {"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":"ok"}]}
             ]
         });
-        let kiro = anthropic_to_kiro(body, None).unwrap();
+        let kiro = anthropic_to_kiro(body, None, KIRO_ORIGIN_API_KEY).unwrap();
         assert_eq!(kiro.pointer("/conversationState/currentMessage/userInputMessage/modelId").and_then(Value::as_str), Some("claude-sonnet-5"));
+        assert_eq!(kiro.pointer("/conversationState/currentMessage/userInputMessage/origin").and_then(Value::as_str), Some(KIRO_ORIGIN_API_KEY));
         assert!(kiro.pointer("/conversationState/conversationId").and_then(Value::as_str).is_some());
         assert_eq!(kiro.pointer("/conversationState/currentMessage/userInputMessage/userInputMessageContext/tools/0/toolSpecification/name").and_then(Value::as_str), Some("read_file"));
         assert_eq!(kiro.pointer("/conversationState/currentMessage/userInputMessage/userInputMessageContext/toolResults/0/toolUseId").and_then(Value::as_str), Some("tool_1"));

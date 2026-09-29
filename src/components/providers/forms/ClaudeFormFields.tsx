@@ -111,7 +111,6 @@ interface ClaudeFormFieldsProps {
   isKiroPreset?: boolean;
   kiroAuthMode?: "api_key" | "oauth";
   onKiroAuthModeChange?: (mode: "api_key" | "oauth") => void;
-  isKiroOauthAuthenticated?: boolean;
   selectedKiroAccountId?: string | null;
   onKiroAccountSelect?: (accountId: string | null) => void;
 
@@ -199,7 +198,6 @@ export function ClaudeFormFields({
   isKiroPreset,
   kiroAuthMode = "api_key",
   onKiroAuthModeChange,
-  isKiroOauthAuthenticated,
   selectedKiroAccountId,
   onKiroAccountSelect,
   templateValueEntries,
@@ -1031,8 +1029,10 @@ export function ClaudeFormFields({
                     ) : (
                       <Download className="h-3.5 w-3.5" />
                     )}
-{isKiroPreset
-                      ? t("kiroOauth.modelsManual", { defaultValue: "手动填写模型" })
+                    {isKiroPreset
+                      ? t("kiroOauth.modelsManual", {
+                          defaultValue: "手动填写模型",
+                        })
                       : t("providerForm.fetchModels")}
                   </Button>
                 </div>

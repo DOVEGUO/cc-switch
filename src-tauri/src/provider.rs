@@ -76,7 +76,7 @@ impl Provider {
     }
 
     pub fn is_kiro(&self) -> bool {
-        self.provider_type() == Some("kiro")
+        matches!(self.provider_type(), Some("kiro" | "kiro_oauth"))
             || self
                 .meta
                 .as_ref()

@@ -317,7 +317,7 @@ fn decode_event(message_type: &str, event_type: &str, payload: &[u8]) -> KiroEve
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
             KiroEvent::Usage {
-                input_tokens: uncached + cache_read,
+                input_tokens: uncached.saturating_add(cache_read).saturating_add(cache_write),
                 output_tokens: output,
                 cache_read_tokens: cache_read,
                 cache_write_tokens: cache_write,
@@ -585,7 +585,7 @@ mod tests {
         let response = eventstream_to_openai_response(&body, "claude-sonnet-5").unwrap();
         assert_eq!(response["choices"][0]["message"]["content"], "hello");
         assert_eq!(response["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "read");
-        assert_eq!(response["usage"]["prompt_tokens"], 14);
+        assert_eq!(response["usage"]["prompt_tokens"], 16);
         assert_eq!(response["usage"]["completion_tokens"], 3);
     }
 }

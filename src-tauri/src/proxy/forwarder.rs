@@ -1485,7 +1485,7 @@ impl RequestForwarder {
             .then(|| CodexStandaloneEndpoint::from_effective_endpoint(&effective_endpoint))
             .flatten();
 
-        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+        let mut url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
@@ -1908,6 +1908,12 @@ impl RequestForwarder {
                         &mut filtered_body,
                         credential.profile_arn.as_deref(),
                     );
+                    if !credential.region.is_empty() {
+                        let runtime = super::providers::kiro::runtime_base_url(&credential.region);
+                        if !url.starts_with(&runtime) {
+                            url = format!("{runtime}/");
+                        }
+                    }
                     auth = AuthInfo::new(credential.token, AuthStrategy::KiroOAuth);
                     log::debug!(
                         "[KiroOAuth] 成功获取 Runtime token (account={}, region={})",
@@ -2360,6 +2366,10 @@ impl RequestForwarder {
             ordered_headers.insert(
                 http::HeaderName::from_static("x-amz-target"),
                 http::HeaderValue::from_static(super::providers::kiro::KIRO_TARGET),
+            );
+            ordered_headers.insert(
+                http::HeaderName::from_static("x-amzn-kiro-agent-mode"),
+                http::HeaderValue::from_static("vibe"),
             );
             ordered_headers.insert(
                 http::HeaderName::from_static("x-amzn-codewhisperer-optout"),

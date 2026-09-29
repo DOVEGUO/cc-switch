@@ -261,7 +261,9 @@ impl KiroOAuthManager {
         let device: DeviceAuthorizationResponse = serde_json::from_slice(&bytes)?;
         let now = chrono::Utc::now().timestamp_millis();
         let interval = device.interval.max(1).saturating_add(POLLING_SAFETY_MARGIN_SECS);
-        self.pending_device_codes.write().await.insert(device.device_code.clone(), PendingDeviceCode {
+        let mut pending_codes = self.pending_device_codes.write().await;
+        pending_codes.retain(|_, pending| pending.expires_at_ms > now);
+        pending_codes.insert(device.device_code.clone(), PendingDeviceCode {
             client_id: registered.client_id,
             client_secret: registered.client_secret,
             region,
@@ -280,18 +282,20 @@ impl KiroOAuthManager {
 
     pub async fn poll_for_token(&self, device_code: &str) -> Result<Option<KiroOAuthAccount>, KiroOAuthError> {
         let now = chrono::Utc::now().timestamp_millis();
-        let pending = self.pending_device_codes.read().await.get(device_code).cloned()
+        let mut pending_codes = self.pending_device_codes.write().await;
+        let pending = pending_codes.get(device_code).cloned()
             .ok_or_else(|| KiroOAuthError::TokenFetchFailed("Device Code 不存在，请重新登录".to_string()))?;
         if pending.expires_at_ms <= now {
-            self.pending_device_codes.write().await.remove(device_code);
+            pending_codes.remove(device_code);
             return Err(KiroOAuthError::ExpiredToken);
         }
         if pending.next_poll_at_ms > now {
             return Err(KiroOAuthError::AuthorizationPending);
         }
-        if let Some(item) = self.pending_device_codes.write().await.get_mut(device_code) {
+        if let Some(item) = pending_codes.get_mut(device_code) {
             item.next_poll_at_ms = now.saturating_add((item.interval_secs as i64).saturating_mul(1000));
         }
+        drop(pending_codes);
         let endpoint = format!("https://oidc.{}.amazonaws.com/token", pending.region);
         let response = crate::proxy::http_client::get()
             .post(endpoint)
@@ -313,6 +317,8 @@ impl KiroOAuthManager {
                 Some("slow_down") => {
                     if let Some(item) = self.pending_device_codes.write().await.get_mut(device_code) {
                         item.interval_secs = item.interval_secs.saturating_add(5);
+                        item.next_poll_at_ms = chrono::Utc::now().timestamp_millis()
+                            .saturating_add((item.interval_secs as i64).saturating_mul(1000));
                     }
                     Err(KiroOAuthError::AuthorizationPending)
                 }
@@ -348,8 +354,7 @@ impl KiroOAuthManager {
             authenticated_at: chrono::Utc::now().timestamp(),
             requires_reauth: false,
         };
-        self.pending_device_codes.write().await.remove(device_code);
-        self.commit_account(account.clone()).await?;
+        self.commit_account(account.clone(), device_code).await?;
         self.access_tokens.write().await.insert(account_id, CachedToken {
             access_token: tokens.access_token,
             expires_at_ms,
@@ -469,8 +474,16 @@ impl KiroOAuthManager {
         stored.filter(|id| accounts.get(id).is_some_and(|account| !account.requires_reauth))
             .or_else(|| fallback_default(&accounts))
     }
-    async fn commit_account(&self, account: KiroAccountData) -> Result<(), KiroOAuthError> {
+    pub async fn cancel_device_flow(&self, device_code: &str) -> bool {
         let _guard = self.mutation_lock.lock().await;
+        self.pending_device_codes.write().await.remove(device_code).is_some()
+    }
+
+    async fn commit_account(&self, account: KiroAccountData, device_code: &str) -> Result<(), KiroOAuthError> {
+        let _guard = self.mutation_lock.lock().await;
+        if !self.pending_device_codes.read().await.contains_key(device_code) {
+            return Err(KiroOAuthError::ExpiredToken);
+        }
         let mut accounts = self.accounts.read().await.clone();
         let id = account.account_id.clone();
         accounts.insert(id.clone(), account);
@@ -479,11 +492,15 @@ impl KiroOAuthManager {
         self.persist_store(&accounts, default.clone())?;
         *self.accounts.write().await = accounts;
         *self.default_account_id.write().await = default;
+        self.pending_device_codes.write().await.remove(device_code);
         Ok(())
     }
     async fn replace_account(&self, account: KiroAccountData) -> Result<(), KiroOAuthError> {
         let _guard = self.mutation_lock.lock().await;
         let mut accounts = self.accounts.read().await.clone();
+        if !accounts.contains_key(&account.account_id) {
+            return Err(KiroOAuthError::AccountNotFound(account.account_id));
+        }
         accounts.insert(account.account_id.clone(), account);
         let default = self.default_account_id.read().await.clone();
         self.persist_store(&accounts, default.clone())?;
@@ -507,18 +524,73 @@ impl KiroOAuthManager {
         if !self.storage_path.exists() { return Ok(()); }
         let bytes = fs::read(&self.storage_path)?;
         let store: KiroOAuthStore = serde_json::from_slice(&bytes)?;
-        *self.accounts.blocking_write() = store.accounts;
-        *self.default_account_id.blocking_write() = store.default_account_id;
+        *self.accounts.try_write().map_err(|error| KiroOAuthError::IoError(error.to_string()))? = store.accounts;
+        *self.default_account_id.try_write().map_err(|error| KiroOAuthError::IoError(error.to_string()))? = store.default_account_id;
         Ok(())
     }
     fn persist_store(&self, accounts: &HashMap<String, KiroAccountData>, default: Option<String>) -> Result<(), KiroOAuthError> {
         if let Some(parent) = self.storage_path.parent() { fs::create_dir_all(parent)?; }
         let store = KiroOAuthStore { version: 1, accounts: accounts.clone(), default_account_id: default };
-        let bytes = serde_json::to_vec_pretty(&store)?;
-        let temp = self.storage_path.with_extension("json.tmp");
-        fs::write(&temp, bytes)?;
-        fs::rename(temp, &self.storage_path)?;
-        Ok(())
+        crate::config::write_json_file_private(&self.storage_path, &store)
+            .map_err(|error| KiroOAuthError::IoError(error.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn account() -> KiroAccountData {
+        KiroAccountData {
+            account_id: "test-account".into(), login: "test".into(),
+            refresh_token: "test-refresh".into(), client_id: "test-client".into(),
+            client_secret: "test-secret".into(), region: KIRO_DEFAULT_REGION.into(),
+            profile_arn: None, authenticated_at: 1, requires_reauth: false,
+        }
+    }
+
+    async fn pending(manager: &KiroOAuthManager) {
+        manager.pending_device_codes.write().await.insert("device".into(), PendingDeviceCode {
+            client_id: "test-client".into(), client_secret: "test-secret".into(),
+            region: KIRO_DEFAULT_REGION.into(), expires_at_ms: i64::MAX,
+            interval_secs: 5, next_poll_at_ms: 0,
+        });
+    }
+
+    #[tokio::test]
+    async fn kiro_cancel_prevents_late_login_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = KiroOAuthManager::new(dir.path().into());
+        pending(&manager).await;
+        assert!(manager.cancel_device_flow("device").await);
+        assert!(matches!(manager.commit_account(account(), "device").await, Err(KiroOAuthError::ExpiredToken)));
+        assert!(manager.get_status().await.accounts.is_empty());
+        assert!(!manager.storage_path.exists());
+    }
+
+    #[tokio::test]
+    async fn kiro_store_reloads_inside_runtime_and_replaces_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = KiroOAuthManager::new(dir.path().into());
+        pending(&manager).await;
+        manager.commit_account(account(), "device").await.unwrap();
+        manager.set_default_account("test-account").await.unwrap();
+        let reloaded = KiroOAuthManager::new(dir.path().into());
+        assert!(reloaded.get_status().await.authenticated);
+        assert!(!manager.cancel_device_flow("device").await);
+        manager.remove_account("test-account").await.unwrap();
+        assert!(matches!(manager.replace_account(account()).await, Err(KiroOAuthError::AccountNotFound(_))));
+        let reloaded = KiroOAuthManager::new(dir.path().into());
+        assert!(reloaded.get_status().await.accounts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn kiro_logout_prevents_late_login_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = KiroOAuthManager::new(dir.path().into());
+        pending(&manager).await;
+        manager.clear_auth().await.unwrap();
+        assert!(manager.commit_account(account(), "device").await.is_err());
     }
 }
 

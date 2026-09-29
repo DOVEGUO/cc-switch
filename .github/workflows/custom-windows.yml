@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/commandcode
+      - feat/kiro
 
 permissions:
   contents: write
@@ -80,13 +81,27 @@ jobs:
       - name: Frontend format check
         run: pnpm format:check
 
+      - name: Frontend unit tests
+        run: pnpm test:unit
+
+      - name: Build frontend
+        run: pnpm build:renderer
+
       - name: Normalize Rust formatting
         working-directory: src-tauri
         run: cargo fmt --all
 
       - name: Command Code bridge tests
         working-directory: src-tauri
+        env:
+          CC_SWITCH_TEST_HOME: ${{ runner.temp }}/cc-switch-tests
         run: cargo test commandcode --lib
+
+      - name: Kiro authentication and bridge tests
+        working-directory: src-tauri
+        env:
+          CC_SWITCH_TEST_HOME: ${{ runner.temp }}/cc-switch-tests
+        run: cargo test kiro --lib
 
       - name: Build Windows x64 MSI
         shell: pwsh

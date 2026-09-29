@@ -465,7 +465,14 @@ pub fn transform_claude_request_for_api_format(
             session_id,
         ),
         "commandcode" => super::commandcode::anthropic_to_commandcode(body, session_id),
-        "kiro" => super::kiro::anthropic_to_kiro(body, session_id),
+        "kiro" => {
+            let origin = if provider.uses_kiro_managed_auth() {
+                super::kiro::KIRO_ORIGIN_OAUTH
+            } else {
+                super::kiro::KIRO_ORIGIN_API_KEY
+            };
+            super::kiro::anthropic_to_kiro(body, session_id, origin)
+        }
         _ => Ok(body),
     }
 }

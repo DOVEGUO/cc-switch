@@ -1377,10 +1377,7 @@ function ProviderFormFull({
       );
       return;
     }
-    if (
-      usesKiroOauth &&
-      !selectedKiroAccountIsUsable(selectedKiroAccountId)
-    ) {
+    if (usesKiroOauth && !selectedKiroAccountIsUsable(selectedKiroAccountId)) {
       toast.error(
         t("managedAuth.selectedAccountNeedsReauth", {
           defaultValue: "已绑定 Kiro 账号不存在或需要重新登录",
@@ -2426,7 +2423,6 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
-              isKiroOauthAuthenticated={isKiroOauthAuthenticated}
               selectedKiroAccountId={selectedKiroAccountId}
               onKiroAccountSelect={setSelectedKiroAccountId}
               templateValueEntries={templateValueEntries}

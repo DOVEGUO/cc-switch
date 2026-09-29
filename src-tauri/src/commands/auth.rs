@@ -262,12 +262,14 @@ pub async fn auth_cancel_login(
     auth_provider: String,
     device_code: String,
     codex_state: State<'_, CodexOAuthState>,
+    kiro_state: State<'_, KiroOAuthState>,
 ) -> Result<bool, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    if auth_provider != AUTH_PROVIDER_CODEX_OAUTH {
-        return Err("Login cancellation is only supported for Codex OAuth".to_string());
+    match auth_provider {
+        AUTH_PROVIDER_CODEX_OAUTH => Ok(codex_state.0.cancel_device_flow(&device_code).await),
+        AUTH_PROVIDER_KIRO_OAUTH => Ok(kiro_state.0.cancel_device_flow(&device_code).await),
+        _ => Err("Login cancellation is not supported for this provider".to_string()),
     }
-    Ok(codex_state.0.cancel_device_flow(&device_code).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
