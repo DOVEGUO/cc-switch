@@ -22,7 +22,7 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
+use crate::commands::{CodexOAuthState, CopilotAuthState, KiroOAuthState, XaiOAuthState};
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
@@ -1890,6 +1890,37 @@ impl RequestForwarder {
                 }
             }
 
+            if auth.strategy == AuthStrategy::KiroOAuth {
+                if let Some(app_handle) = &self.app_handle {
+                    let kiro_state = app_handle.state::<KiroOAuthState>();
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.managed_account_id_for("kiro_oauth"));
+                    let credential = match &account_id {
+                        Some(id) => kiro_state.0.get_runtime_credential_for_account(id).await,
+                        None => kiro_state.0.get_runtime_credential().await,
+                    }
+                    .map_err(|error| ProxyError::AuthError(format!(
+                        "Kiro OAuth 认证失败: {error}"
+                    )))?;
+                    super::providers::kiro::apply_profile_arn(
+                        &mut filtered_body,
+                        credential.profile_arn.as_deref(),
+                    );
+                    auth = AuthInfo::new(credential.token, AuthStrategy::KiroOAuth);
+                    log::debug!(
+                        "[KiroOAuth] 成功获取 Runtime token (account={}, region={})",
+                        account_id.as_deref().unwrap_or("default"),
+                        credential.region
+                    );
+                } else {
+                    return Err(ProxyError::AuthError(
+                        "Kiro OAuth 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
+
             for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
                 if !secret.is_empty() && !log_secrets.contains(secret) {
                     log_secrets.push(secret.clone());
@@ -1999,6 +2030,7 @@ impl RequestForwarder {
             resolved_claude_api_format.as_deref(),
             Some("commandcode")
         );
+        let is_kiro = matches!(resolved_claude_api_format.as_deref(), Some("kiro"));
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
@@ -2140,6 +2172,16 @@ impl RequestForwarder {
                 }
                 continue;
             }
+            if is_kiro && key_str.eq_ignore_ascii_case("accept") {
+                if !saw_accept {
+                    saw_accept = true;
+                    ordered_headers.append(
+                        http::header::ACCEPT,
+                        http::HeaderValue::from_static("*/*"),
+                    );
+                }
+                continue;
+            }
             // The Codex CLI sends `Accept: text/event-stream`, whereas a native
             // Anthropic client sends `application/json` (streaming is driven by
             // the body's stream:true). Strict Anthropic gateways return 406 Not
@@ -2239,6 +2281,12 @@ impl RequestForwarder {
                 http::HeaderValue::from_static("text/event-stream"),
             );
         }
+        if is_kiro && !saw_accept {
+            ordered_headers.append(
+                http::header::ACCEPT,
+                http::HeaderValue::from_static("*/*"),
+            );
+        }
 
         // On the Codex→Anthropic path, add application/json when Accept is missing (matching a native Anthropic client).
         if codex_responses_to_anthropic && !saw_accept {
@@ -2289,6 +2337,42 @@ impl RequestForwarder {
             ordered_headers.insert(
                 http::HeaderName::from_static("x-cli-environment"),
                 http::HeaderValue::from_static("production"),
+            );
+        }
+
+        if is_kiro {
+            ordered_headers.insert(
+                http::header::ACCEPT,
+                http::HeaderValue::from_static("*/*"),
+            );
+            ordered_headers.insert(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("application/x-amz-json-1.0"),
+            );
+            ordered_headers.insert(
+                http::header::USER_AGENT,
+                http::HeaderValue::from_static(super::providers::kiro::KIRO_USER_AGENT),
+            );
+            ordered_headers.insert(
+                http::HeaderName::from_static("x-amz-user-agent"),
+                http::HeaderValue::from_static(super::providers::kiro::KIRO_AMZ_USER_AGENT),
+            );
+            ordered_headers.insert(
+                http::HeaderName::from_static("x-amz-target"),
+                http::HeaderValue::from_static(super::providers::kiro::KIRO_TARGET),
+            );
+            ordered_headers.insert(
+                http::HeaderName::from_static("x-amzn-codewhisperer-optout"),
+                http::HeaderValue::from_static("false"),
+            );
+            ordered_headers.insert(
+                http::HeaderName::from_static("amz-sdk-invocation-id"),
+                http::HeaderValue::from_str(&uuid::Uuid::new_v4().to_string())
+                    .expect("UUID is a valid HTTP header value"),
+            );
+            ordered_headers.insert(
+                http::HeaderName::from_static("amz-sdk-request"),
+                http::HeaderValue::from_static("attempt=1; max=1"),
             );
         }
 
@@ -3317,6 +3401,10 @@ fn rewrite_claude_transform_endpoint(
             _ => target_path.to_string(),
         };
         return (rewritten, passthrough_query);
+    }
+
+    if api_format == "kiro" {
+        return ("/".to_string(), None);
     }
 
     let target_path = if is_copilot && api_format == "openai_responses" {
