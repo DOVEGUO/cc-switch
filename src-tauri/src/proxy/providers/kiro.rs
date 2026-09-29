@@ -205,6 +205,33 @@ fn history_user(message: &Value, model: &str) -> Value {
     json!({"userInputMessage": user_parts(message, model, None)})
 }
 
+/// Kiro rejects the whole request when a tool schema has top-level
+/// anyOf/oneOf/allOf or lacks `"type":"object"` (MCP tools often do). Merge
+/// the branches' properties into one object; nested combinators are accepted.
+fn kiro_tool_schema(schema: Option<&Value>) -> Value {
+    let Some(Value::Object(schema)) = schema else {
+        return json!({"type": "object", "properties": {}});
+    };
+    let mut out = schema.clone();
+    let mut properties = match out.remove("properties") {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+    for key in ["anyOf", "oneOf", "allOf"] {
+        let Some(Value::Array(branches)) = out.remove(key) else { continue };
+        for branch in branches {
+            if let Some(Value::Object(props)) = branch.get("properties") {
+                for (name, prop) in props {
+                    properties.entry(name.clone()).or_insert_with(|| prop.clone());
+                }
+            }
+        }
+    }
+    out.insert("type".into(), json!("object"));
+    out.insert("properties".into(), Value::Object(properties));
+    Value::Object(out)
+}
+
 fn convert_tools(body: &Value) -> Vec<Value> {
     body.get("tools")
         .and_then(Value::as_array)
@@ -214,7 +241,7 @@ fn convert_tools(body: &Value) -> Vec<Value> {
             let name = tool.get("name")?.as_str()?.trim();
             if name.is_empty() { return None; }
             let description = tool.get("description").and_then(Value::as_str).unwrap_or("");
-            let schema = tool.get("input_schema").cloned().unwrap_or_else(|| json!({"type":"object","properties":{}}));
+            let schema = kiro_tool_schema(tool.get("input_schema"));
             Some(json!({
                 "toolSpecification": {
                     "name": name,
@@ -363,6 +390,27 @@ mod tests {
         })).unwrap();
         assert_eq!(image["format"], "jpeg");
         assert_eq!(image["source"]["bytes"], "aGVsbG8=");
+    }
+
+    #[test]
+    fn flattens_top_level_combinators_kiro_rejects() {
+        let schema = kiro_tool_schema(Some(&json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "required": ["id"],
+            "properties": {"id": {"type": "string"}},
+            "anyOf": [
+                {"properties": {"a": {"type": "string"}}, "required": ["a"]},
+                {"properties": {"b": {"anyOf": [{"type": "string"}, {"type": "number"}]}}}
+            ]
+        })));
+        assert_eq!(schema["type"], "object");
+        assert!(schema.get("anyOf").is_none());
+        assert_eq!(schema["required"], json!(["id"]));
+        assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
+        let props = schema["properties"].as_object().unwrap();
+        assert_eq!(props.keys().collect::<Vec<_>>(), ["id", "a", "b"]);
+        assert!(props["b"].get("anyOf").is_some(), "nested combinators are accepted");
+        assert_eq!(kiro_tool_schema(None), json!({"type": "object", "properties": {}}));
     }
 
     #[test]
