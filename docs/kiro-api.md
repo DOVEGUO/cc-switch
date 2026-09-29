@@ -33,6 +33,12 @@ Token 用量复用现有采集器。服务端只返回 credits 的事件不伪�
 
 ## 验证
 
+### Claude Code WebSearch
+
+Kiro API Key 模式下，Claude Code 内置 WebSearch 的独立 `web_search_20250305` 请求会直接调用所选区域的 `https://q.<region>.amazonaws.com/mcp`，复用 CC Switch 网络代理。无需另外配置搜索服务密钥。
+
+支持 JSON 和 Anthropic SSE 响应、域名结果过滤、30 秒超时及标准搜索失败结果。搜索结果来自 MCP，不估算或记入模型 Token 费用。当前仅支持独立搜索子请求；混合多工具搜索、动态过滤版搜索和位置参数会明确拒绝，不会静默忽略。
+
 编译、类型检查、前端单元测试、协议测试及 MSI 打包由 GitHub 的 `Custom Windows MSI` 工作流执行。本地不需要 Rust。
 
 工作流还上传 `Kiro-API-route-tests-windows-x64` 测试程序。该程序使用内存数据库和独立测试目录，不读取或改写实际供应商配置。通过进程环境提供以下变量后，运行下载的测试可执行文件：

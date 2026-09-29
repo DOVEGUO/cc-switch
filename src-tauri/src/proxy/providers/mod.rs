@@ -24,6 +24,7 @@ pub mod copilot_auth;
 pub mod kiro;
 pub mod kiro_auth;
 pub mod kiro_eventstream;
+pub mod kiro_websearch;
 pub mod copilot_model_map;
 mod gemini;
 pub(crate) mod gemini_schema;

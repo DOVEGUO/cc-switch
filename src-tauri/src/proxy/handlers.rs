@@ -201,6 +201,11 @@ async fn handle_messages_for_app(
         .unwrap_or(false);
 
     // 转发请求
+    if ctx.provider.is_kiro()
+        && super::providers::kiro_websearch::has_native_search(&body)
+    {
+        return super::providers::kiro_websearch::handle(&ctx.provider, &body).await;
+    }
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
