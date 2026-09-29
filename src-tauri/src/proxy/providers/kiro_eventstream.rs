@@ -18,6 +18,7 @@ enum KiroEvent {
         id: String,
         name: Option<String>,
         input: Option<String>,
+        replace_input: bool,
         stop: bool,
     },
     Usage {
@@ -52,6 +53,7 @@ impl ToolAccumulator {
         id: String,
         name: Option<String>,
         input: Option<String>,
+        replace_input: bool,
         stop: bool,
     ) -> Vec<CompletedTool> {
         let mut completed = Vec::new();
@@ -74,6 +76,9 @@ impl ToolAccumulator {
             self.current_name = name;
         }
         if let Some(input) = input {
+            if replace_input {
+                self.current_input.clear();
+            }
             self.current_input.push_str(&input);
         }
         if stop {
@@ -279,15 +284,17 @@ fn decode_event(message_type: &str, event_type: &str, payload: &[u8]) -> KiroEve
                 .get("name")
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
-            let input = body.get("input").map(|value| match value {
-                Value::String(value) => value.clone(),
-                other => other.to_string(),
-            });
+            let (input, replace_input) = match body.get("input") {
+                Some(Value::String(value)) => (Some(value.clone()), false),
+                Some(other) => (Some(other.to_string()), true),
+                None => (None, false),
+            };
             let stop = body.get("stop").and_then(Value::as_bool).unwrap_or(false);
             KiroEvent::ToolFragment {
                 id,
                 name,
                 input,
+                replace_input,
                 stop,
             }
         }
@@ -420,8 +427,8 @@ where
                     KiroEvent::Reasoning(text) if !text.is_empty() => {
                         yield Ok(openai_chunk(&id, &model, json!({"reasoning_content": text}), None));
                     }
-                    KiroEvent::ToolFragment { id: tool_id, name, input, stop } => {
-                        for tool in tools.update(tool_id, name, input, stop) {
+                    KiroEvent::ToolFragment { id: tool_id, name, input, replace_input, stop } => {
+                        for tool in tools.update(tool_id, name, input, replace_input, stop) {
                             used_tool = true;
                             let delta = json!({
                                 "tool_calls": [{
@@ -486,8 +493,8 @@ pub fn eventstream_to_openai_response(body: &[u8], model: &str) -> Result<Value,
         match event {
             KiroEvent::Text(value) => text.push_str(&value),
             KiroEvent::Reasoning(value) => reasoning.push_str(&value),
-            KiroEvent::ToolFragment { id, name, input, stop } => {
-                completed_tools.extend(tools.update(id, name, input, stop));
+            KiroEvent::ToolFragment { id, name, input, replace_input, stop } => {
+                completed_tools.extend(tools.update(id, name, input, replace_input, stop));
             }
             KiroEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } => {
                 latest_usage = Some((input_tokens, output_tokens, cache_read_tokens, cache_write_tokens));
