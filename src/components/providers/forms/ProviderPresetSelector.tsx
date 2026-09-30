@@ -140,18 +140,13 @@ export function getVisiblePresetEntries(
 ): PresetEntry[] {
   const { query, sortMode, t } = options;
 
-  // DOVEGUO custom build: hide sponsored/recommended presets that upstream
-  // marks with the yellow star (isPartner). Prime partners use a heart badge
-  // and remain visible.
-  const withoutStarredPartners = entries.filter(
-    (entry) => !entry.preset.isPartner,
-  );
+  // DOVEGUO custom build: hide sponsored presets that upstream marks with the
+  // yellow star (isPartner). Prime partners keep their heart badge and stay
+  // visible. Filtering `entries` in place leaves upstream's expression below
+  // untouched, so future upstream edits merge cleanly.
+  entries = entries.filter((entry) => !entry.preset.isPartner);
 
-  return sortPresetEntries(
-    filterPresetEntries(withoutStarredPartners, query, t),
-    sortMode,
-    t,
-  );
+  return sortPresetEntries(filterPresetEntries(entries, query, t), sortMode, t);
 }
 
 interface ProviderPresetSelectorProps {

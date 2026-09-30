@@ -676,13 +676,19 @@ async fn query_provider_usage_inner(
             });
         }
 
-        // Token Plan 的 tier 可携带 USD 额度信息，需要编码为 JSON extra。
-        // Command Code / Kiro 直接沿用 service 给出的套餐标签；ZenMux 保持旧格式。
+        // ZenMux 的 tier 携带 USD 额度信息，需要编码为 JSON extra
         let has_usd = quota
             .tiers
             .first()
             .map(|t| t.used_value_usd.is_some())
             .unwrap_or(false);
+        let plan_label = quota
+            .credential_message
+            .as_deref()
+            .and_then(|msg| msg.split(' ').next())
+            .map(|tier| format!("ZenMux·{}", tier.to_uppercase()));
+        // 本发行版：仅 ZenMux 沿用上面的 tier 前缀，Command Code / Kiro 直接使用
+        // service 给的套餐标签，其余供应商不显示套餐标签。上游表达式保持原样，便于与上游合并。
         let plan_label = match coding_plan_provider.as_deref() {
             Some(provider)
                 if provider.eq_ignore_ascii_case("commandcode")
@@ -690,11 +696,7 @@ async fn query_provider_usage_inner(
             {
                 quota.credential_message.clone()
             }
-            Some(provider) if provider.eq_ignore_ascii_case("zenmux") => quota
-                .credential_message
-                .as_deref()
-                .and_then(|msg| msg.split(' ').next())
-                .map(|tier| format!("ZenMux·{}", tier.to_uppercase())),
+            Some(provider) if provider.eq_ignore_ascii_case("zenmux") => plan_label,
             _ => None,
         };
         let mut first_tier = true;
