@@ -4,6 +4,7 @@ import App from "./App";
 import { DatabaseUpgrade } from "./components/DatabaseUpgrade";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
+import { registerForkIcons } from "@/icons/forkIcons";
 // 导入国际化配置
 import i18n from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -86,6 +87,9 @@ try {
 }
 
 async function bootstrap() {
+  // 本发行版自有图标：必须在首次渲染前注册（见 src/icons/forkIcons.ts）。
+  registerForkIcons();
+
   // 启动早期主动查询后端初始化错误，避免事件竞态
   try {
     const initError = (await invoke(
