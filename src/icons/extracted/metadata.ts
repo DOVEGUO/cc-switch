@@ -2,13 +2,6 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
-  kiro: {
-    name: "kiro",
-    displayName: "Kiro",
-    category: "ai-provider",
-    keywords: ["kiro", "aws", "amazon"],
-    defaultColor: "#9046FF",
-  },
   "9527code": {
     name: "9527code",
     displayName: "9527CODE",
