@@ -152,16 +152,10 @@ export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
   : POSIX_ONE_CLICK_INSTALL_COMMANDS;
 
+// 只保留本发行版露出的工具（见 TOOL_NAMES）；toolDisplayName 对未知工具回退原串。
 export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
   codex: "Codex",
-  gemini: "Gemini CLI",
-  grok: "Grok Build",
-  opencode: "OpenCode",
-  openclaw: "OpenClaw",
-  hermes: "Hermes",
-  pi: "Pi",
-  mcode: "MiniMax Code",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -173,13 +167,6 @@ export function toolDisplayName(tool: string): string {
 export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   claude: "claude",
   codex: "codex",
-  gemini: "gemini",
-  grok: "grokbuild",
-  opencode: "opencode",
-  openclaw: "openclaw",
-  hermes: "hermes",
-  pi: "pi",
-  mcode: "mcode",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
