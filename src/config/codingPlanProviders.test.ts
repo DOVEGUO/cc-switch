@@ -34,18 +34,25 @@ describe("detectCodingPlanProvider (OpenCode Go)", () => {
 });
 
 describe("detectCodingPlanProvider (Command Code)", () => {
-  // 正向用例（/provider 与 /provider/v1）由上游 commandCodeUsage.test.ts 覆盖。
-  // 这里只钉边界。裸主机刻意不命中：它是 Go 档的 base，而 Go 档没有 API 接入，
-  // 后端 coding_plan.rs 的 detect_provider 同样要求 path 含 /provider——放宽这条
-  // 只会让前端出额度卡、后端回 Unknown coding plan provider。
+  // /provider 与 /provider/v1 两档由上游 commandCodeUsage.test.ts 覆盖。这里守住
+  // 裸主机（Go 档的 base，本地路由模拟 CLI 打 /alpha/generate）也要命中——它的额度
+  // 同样走根域名的 /alpha/* 控制面；再守住仿冒/本地地址不命中。
   it.each([
     "https://api.commandcode.ai",
+    "https://api.commandcode.ai/",
+    "https://api.commandcode.ai/provider",
+    "https://api.commandcode.ai/provider/v1",
+  ])("treats %s as Command Code", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBe("command_code");
+  });
+
+  it.each([
     "http://api.commandcode.ai",
     "http://127.0.0.1:55990",
     "http://localhost:55990",
     "https://api.commandcode.ai.example.com",
     "https://proxy.example.com/api.commandcode.ai",
-  ])("does not treat %s as Command Code", (baseUrl) => {
+  ])("does not treat look-alike %s as Command Code", (baseUrl) => {
     expect(detectCodingPlanProvider(baseUrl)).toBeNull();
   });
 });

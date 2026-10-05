@@ -135,15 +135,16 @@ describe("Command Code Provider Presets", () => {
     );
   });
 
-  // 额度卡只认带 /provider 的 base（后端 detect_provider 同口径）；Go 档没有 API
-  // 接入，刻意不出卡，多一条反而会答 Unknown coding plan provider。
-  it("shows the quota card on the API plan only", () => {
+  // 两档共用同一套额度接口：Claude 的 /provider 与 Go 档的裸主机都走根域名下的
+  // /alpha/* 控制面（后端 query_command_code_at 用写死的 canonical base 查），
+  // 所以两档都要出额度卡。
+  it("shows the quota card on both plans", () => {
     expect(detectCodingPlanProvider(envOf(apiPlan!).ANTHROPIC_BASE_URL)).toBe(
       "command_code",
     );
-    expect(
-      detectCodingPlanProvider(envOf(goPlan!).ANTHROPIC_BASE_URL),
-    ).toBeNull();
+    expect(detectCodingPlanProvider(envOf(goPlan!).ANTHROPIC_BASE_URL)).toBe(
+      "command_code",
+    );
   });
 });
 

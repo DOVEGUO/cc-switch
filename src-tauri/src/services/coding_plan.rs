@@ -50,7 +50,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 同时覆盖 /zen/go 与 /zen/go/v1 两档 base；Zen 按量版（/zen/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
         Some(CodingPlanProvider::OpencodeGo)
-    } else if url.contains("api.commandcode.ai/provider") {
+    } else if is_command_code_base(url) {
         Some(CodingPlanProvider::CommandCode)
     } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
         // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
@@ -61,6 +61,22 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
     } else {
         None
     }
+}
+
+/// Command Code 的推理数据面在 `/provider`（Claude）与 `/provider/v1`（Codex），
+/// 控制面 `/alpha/*` 固定在根域名——所以 `query_command_code_at` 用的是写死的
+/// `COMMAND_CODE_API_BASE`。Go 档没有 API 接入，base 就是裸主机，也必须命中，
+/// 否则它的额度卡只会答 "Unknown coding plan provider"。
+///
+/// 只认 canonical host（scheme + host + 端口），刻意不匹配 localhost、127.0.0.1
+/// 或第三方镜像——与前端 `CODING_PLAN_PROVIDERS` 的 pattern 同口径。
+fn is_command_code_base(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    parsed.scheme().eq_ignore_ascii_case("https")
+        && parsed.host_str() == Some("api.commandcode.ai")
+        && parsed.port_or_known_default() == Some(443)
 }
 
 fn now_millis() -> i64 {
@@ -1820,6 +1836,33 @@ mod tests {
             Some(CodingPlanProvider::CommandCode)
         ));
         assert!(detect_provider("https://commandcode.ai/provider").is_none());
+    }
+
+    /// Go 档没有 API 接入，base 就是裸主机（本地路由模拟 CLI 打 /alpha/generate）。
+    /// 它的额度同样走根域名的 `/alpha/*` 控制面，必须与 /provider 两档一样命中。
+    #[test]
+    fn command_code_detects_the_bare_host_used_by_the_go_plan() {
+        assert!(matches!(
+            detect_provider("https://api.commandcode.ai"),
+            Some(CodingPlanProvider::CommandCode)
+        ));
+        assert!(matches!(
+            detect_provider("https://api.commandcode.ai/"),
+            Some(CodingPlanProvider::CommandCode)
+        ));
+        // 仿冒 / 本地地址不命中
+        for look_alike in [
+            "http://api.commandcode.ai",
+            "https://api.commandcode.ai.example.com",
+            "https://proxy.example.com/api.commandcode.ai",
+            "http://127.0.0.1:55990",
+            "http://localhost:55990",
+        ] {
+            assert!(
+                detect_provider(look_alike).is_none(),
+                "should not match {look_alike}"
+            );
+        }
     }
 
     #[test]

@@ -79,14 +79,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     pattern: /opencode\.ai\/zen\/go/i,
   },
   {
-    // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
-    // Claude 使用 /provider，Codex 使用 /provider/v1。
-    // Go 档没有 API 接入（base 是裸主机），本条刻意不命中它：后端
-    // coding_plan.rs 的 detect_provider 同样要求 path 含 /provider，
-    // 放宽这里只会让前端出卡、后端答 Unknown coding plan provider。
+    // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化，端点固定在
+    // 根域名的 /alpha/*（后端 query_command_code_at 用写死的 canonical base 查）。
+    // 推理数据面才分两档：Claude 走 /provider，Codex 走 /provider/v1；Go 档没有
+    // API 接入，base 就是裸主机。三档共用同一套额度接口，所以裸主机一起放行——
+    // 与后端 coding_plan.rs 的 is_command_code_base 同口径（只认 canonical host）。
     id: "command_code",
     label: "Command Code",
-    pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
+    pattern: /^https:\/\/api\.commandcode\.ai(?:\/|$)/i,
   },
 ] as const;
 
