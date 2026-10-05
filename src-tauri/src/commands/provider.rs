@@ -705,8 +705,13 @@ async fn query_provider_usage_inner(
             .map(|tier| format!("ZenMux·{}", tier.to_uppercase()));
         // 本发行版：仅 ZenMux 沿用上面的 tier 前缀，Command Code 直接使用 service
         // 给的套餐标签，其余供应商不显示套餐标签。上游表达式保持原样，便于与上游合并。
+        // 额度 id 上游用 command_code；commandcode 是本发行版旧值，未重新保存过的
+        // provider 仍会带上它，两个都认。
         let plan_label = match coding_plan_provider.as_deref() {
-            Some(provider) if provider.eq_ignore_ascii_case("commandcode") => {
+            Some(provider)
+                if provider.eq_ignore_ascii_case("command_code")
+                    || provider.eq_ignore_ascii_case("commandcode") =>
+            {
                 quota.credential_message.clone()
             }
             Some(provider) if provider.eq_ignore_ascii_case("zenmux") => plan_label,
