@@ -235,15 +235,35 @@ describe("preset families", () => {
     expect(groupPresetRows(claudeEntries)).toHaveLength(74);
   });
 
-  // DOVEGUO custom build: 黄星赞助商预设不进「添加供应商」。
-  it("hides sponsored isPartner presets", () => {
+  // DOVEGUO custom build: 黄星赞助预设（isPartner）不进「添加供应商」。两条路径都要
+  // 守——v7 的界面走 getVisiblePresetRows，只测 getVisiblePresetEntries 会漏掉真正
+  // 渲染的那条（这个 bug 就是这样漏过去的）。
+  it("hides sponsored presets on both visibility paths", () => {
     const entries = providerPresets
       .filter((item) => !item.hidden)
       .map((item, index) => ({ id: `claude-${index}`, preset: item }));
-    const visible = getVisiblePresetEntries(entries, { query: "", t });
+    const sponsored = entries.filter((entry) => entry.preset.isPartner);
 
-    expect(entries.some((entry) => entry.preset.isPartner)).toBe(true);
-    expect(visible.some((entry) => entry.preset.isPartner)).toBe(false);
+    expect(sponsored.length).toBeGreaterThan(0);
+
+    const listedNames = getVisiblePresetEntries(entries, {
+      query: "",
+      t,
+    }).map((entry) => entry.preset.name);
+    for (const entry of sponsored) {
+      expect(listedNames).not.toContain(entry.preset.name);
+    }
+
+    const rowNames = getVisiblePresetRows(entries, { query: "", t }).flatMap(
+      ({ row }) => row.versions.map((entry) => entry.preset.name),
+    );
+    for (const entry of sponsored) {
+      expect(rowNames).not.toContain(entry.preset.name);
+    }
+
+    // primePartner 刻意保留：带它的只有国内版 Kimi 两个入口。
+    expect(rowNames).toContain("Kimi");
+    expect(rowNames).toContain("Kimi For Coding");
   });
 
   it("orders plans and regions as the design does where a family says so", () => {

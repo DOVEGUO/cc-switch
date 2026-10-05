@@ -95,18 +95,28 @@ export function filterPresetEntries(
   return entries.filter((entry) => presetMatches(entry, query, t));
 }
 
+/**
+ * DOVEGUO custom build: 黄星赞助预设（上游 `isPartner`）不进「添加供应商」。
+ *
+ * 刻意不动 `primePartner`：v7 起界面已不渲染它的心形徽章，而带这个标记的只有
+ * Kimi 家族的两个**国内**入口（api.moonshot.cn / api.kimi.com）。一并剔除会把
+ * 国内版 Kimi 换成只剩海外版（api.moonshot.ai / api.kimi.ai），不是本意。
+ *
+ * 注意：v7 把渲染路径换成了 `getVisiblePresetRows`，过滤必须挂在那一侧；
+ * 只挂在这里等于没生效（旧的 `getVisiblePresetEntries` 只剩测试在用）。
+ */
+function withoutSponsoredPresets(entries: PresetEntry[]): PresetEntry[] {
+  return entries.filter((entry) => !entry.preset.isPartner);
+}
+
 /** 一律按名称排（中文名按拼音插进字母序），不再有官方 / 赞助商置顶 */
 export function getVisiblePresetEntries(
   entries: PresetEntry[],
   { query, t }: { query: string; t: PresetTranslator },
 ): PresetEntry[] {
-  // DOVEGUO custom build: hide sponsored presets that upstream marks with the
-  // yellow star (isPartner). Prime partners keep their heart badge and stay
-  // visible. Filtering `entries` in place leaves upstream's expression below
-  // untouched, so future upstream edits merge cleanly.
-  entries = entries.filter((entry) => !entry.preset.isPartner);
+  const visible = withoutSponsoredPresets(entries);
 
-  return sortPresetsByName(filterPresetEntries(entries, query, t), t);
+  return sortPresetsByName(filterPresetEntries(visible, query, t), t);
 }
 
 /** 第 1 步的一行和搜索命中的版本下标（空 = 整家命中） */
@@ -120,10 +130,12 @@ export function getVisiblePresetRows(
   entries: PresetEntry[],
   { query, t }: { query: string; t: PresetTranslator },
 ): VisiblePresetRow[] {
-  const found = groupPresetRows(entries).flatMap((row) => {
-    const match = matchPresetRow(row, query, t);
-    return match ? [{ row, hits: match.versions }] : [];
-  });
+  const found = groupPresetRows(withoutSponsoredPresets(entries)).flatMap(
+    (row) => {
+      const match = matchPresetRow(row, query, t);
+      return match ? [{ row, hits: match.versions }] : [];
+    },
+  );
   return sortPresetRowsByName(found, t);
 }
 
@@ -563,7 +575,7 @@ function PresetPicker({
 
   const groups = useMemo(() => {
     const byGroup = new Map<PresetGroup, PresetEntry[]>();
-    for (const entry of entries) {
+    for (const entry of withoutSponsoredPresets(entries)) {
       const group = presetGroup(entry.preset);
       byGroup.set(group, [...(byGroup.get(group) ?? []), entry]);
     }
