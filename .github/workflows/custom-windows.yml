@@ -139,11 +139,11 @@ jobs:
           $notes = @"
           Custom CC Switch based on official v$env:VERSION.
 
+          - Two Command Code presets: Go (CLI bridge to /alpha/generate) and API (upstream's /provider/v1)
           - Native Command Code /alpha/generate support for Claude Code
-          - Command Code Token Plan quota: 5h / weekly / monthly
+          - Command Code Token Plan quota: 5h / weekly / monthly, read from the live API response
+            (windowLimits used/cap for 5h and weekly, credits + totalCost for monthly; no hardcoded caps)
           - Reuses the provider API key; canonical api.commandcode.ai only
-          - Go monthly cap $10; GOAT monthly cap $70
-          - 5h/weekly caps use the live API-returned cap; monthly reset uses currentPeriodEnd
           - Real streaming token usage accounting
           - Official Command Code provider icon
           - Yellow-star sponsored presets hidden from Add Provider
