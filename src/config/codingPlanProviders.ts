@@ -21,7 +21,7 @@ export interface CodingPlanProviderEntry {
     | "zenmux"
     | "volcengine"
     | "opencode_go"
-    | "commandcode";
+    | "command_code";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -68,13 +68,6 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     pattern: /volces\.com\/api\/(plan|coding)/i,
   },
   {
-    // Command Code：只认官方 canonical API host。刻意不匹配 localhost、
-    // 127.0.0.1 或其它本地/第三方代理，额度查询直接复用当前 provider API Key。
-    id: "commandcode",
-    label: "Command Code",
-    pattern: /^https:\/\/api\.commandcode\.ai(?:\/|$)/i,
-  },
-  {
     // OpenCode Go（$10/月订阅，三时间窗口美元额度）。用量端点
     // GET /zen/go/v1/usage 是官方第一方但未文档化的路由，只认
     // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）。
@@ -85,7 +78,29 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     label: "OpenCode Go",
     pattern: /opencode\.ai\/zen\/go/i,
   },
+  {
+    // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
+    // Claude 使用 /provider，Codex 使用 /provider/v1。
+    // Go 档没有 API 接入（base 是裸主机），本条刻意不命中它：后端
+    // coding_plan.rs 的 detect_provider 同样要求 path 含 /provider，
+    // 放宽这里只会让前端出卡、后端答 Unknown coding plan provider。
+    id: "command_code",
+    label: "Command Code",
+    pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
+  },
 ] as const;
+
+/**
+ * 旧的 DOVEGUO 发行版把 Command Code 的额度 id 存成 `commandcode`，上游 v4.0.0 起为
+ * `command_code`。读取已存配置时归一，避免额度下拉框没有选中项。后端只按 base_url
+ * 判定供应商（`coding_plan.rs::detect_provider`），这个值本身不影响查询结果，所以
+ * 重新保存一次即固定为新 id。
+ */
+export function normalizeCodingPlanProviderId(
+  id: string | undefined,
+): string | undefined {
+  return id === "commandcode" ? "command_code" : id;
+}
 
 /** 根据 Base URL 自动检测 Coding Plan 供应商；未命中返回 null */
 export function detectCodingPlanProvider(
@@ -139,7 +154,8 @@ export function extractBaseUrlForUsageDetection(
  *
  * - 仅在 `meta.usage_script` 完全缺失时注入，不覆盖用户/UsageScriptModal 已有配置
  * - Claude app 保持既有行为：命中任意 Coding Plan 供应商都注入；
- *   其余 app（claude-desktop/codex/opencode/pi）仅对 OpenCode Go 注入——
+ *   其余 app 仅对已验证预设注入：Codex 支持 Command Code，其他非 Claude
+ *   Coding Plan 保持既有行为——
  *   五个 app 各有一份 OpenCode Go 预设、凭据形态后端全部支持，而智谱/Kimi
  *   等在其他 app 的自动注入未逐一验证过，不随手扩大
  * - code 置空：Rust 端走专用 `coding_plan::get_coding_plan_quota`，不执行 JS 脚本
@@ -158,10 +174,12 @@ export function injectCodingPlanUsageScript<
   );
   const codingPlanProvider = detectCodingPlanProvider(baseUrl);
   if (!codingPlanProvider) return provider;
+  const isCommandCodeForCodex =
+    appId === "codex" && codingPlanProvider === "command_code";
   if (
     appId !== "claude" &&
     codingPlanProvider !== "opencode_go" &&
-    codingPlanProvider !== "commandcode"
+    !isCommandCodeForCodex
   ) {
     return provider;
   }

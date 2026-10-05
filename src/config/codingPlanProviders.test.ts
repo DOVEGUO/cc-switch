@@ -34,30 +34,20 @@ describe("detectCodingPlanProvider (OpenCode Go)", () => {
 });
 
 describe("detectCodingPlanProvider (Command Code)", () => {
-  it("matches only the canonical https://api.commandcode.ai host", () => {
-    expect(detectCodingPlanProvider("https://api.commandcode.ai")).toBe(
-      "commandcode",
-    );
-    expect(detectCodingPlanProvider("https://api.commandcode.ai/")).toBe(
-      "commandcode",
-    );
-    expect(detectCodingPlanProvider("https://api.commandcode.ai/v1")).toBe(
-      "commandcode",
-    );
-  });
-
+  // 正向用例（/provider 与 /provider/v1）由上游 commandCodeUsage.test.ts 覆盖。
+  // 这里只钉边界。裸主机刻意不命中：它是 Go 档的 base，而 Go 档没有 API 接入，
+  // 后端 coding_plan.rs 的 detect_provider 同样要求 path 含 /provider——放宽这条
+  // 只会让前端出额度卡、后端回 Unknown coding plan provider。
   it.each([
+    "https://api.commandcode.ai",
     "http://api.commandcode.ai",
     "http://127.0.0.1:55990",
     "http://localhost:55990",
     "https://api.commandcode.ai.example.com",
     "https://proxy.example.com/api.commandcode.ai",
-  ])(
-    "does not treat local/look-alike endpoint %s as Command Code",
-    (baseUrl) => {
-      expect(detectCodingPlanProvider(baseUrl)).toBeNull();
-    },
-  );
+  ])("does not treat %s as Command Code", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
+  });
 });
 
 describe("detectCodingPlanProvider (MiniMax)", () => {
@@ -172,7 +162,9 @@ describe("injectCodingPlanUsageScript", () => {
     );
   });
 
-  it("injects native Command Code Token Plan without separate credentials", () => {
+  it("leaves the Go-plan bare host without a quota script", () => {
+    // Go 档没有 API 接入，base 就是裸主机；注入与否由上游 commandCodeUsage.test.ts
+    // 按 /provider 覆盖，这里只钉住 Go 档不被误注入。
     const injected = inject("claude", {
       settingsConfig: {
         env: {
@@ -181,13 +173,7 @@ describe("injectCodingPlanUsageScript", () => {
         },
       },
     });
-    expect(injected.meta?.usage_script).toMatchObject({
-      enabled: true,
-      templateType: "token_plan",
-      codingPlanProvider: "commandcode",
-    });
-    expect(injected.meta?.usage_script?.apiKey).toBeUndefined();
-    expect(injected.meta?.usage_script?.baseUrl).toBeUndefined();
+    expect(injected.meta?.usage_script).toBeUndefined();
   });
 
   it("keeps the existing claude behavior for other coding plans", () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import type { Provider } from "@/types";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
+import { detectCodingPlanProvider } from "@/config/codingPlanProviders";
 
 describe("Kimi For Coding Provider Preset", () => {
   const kimiForCoding = providerPresets.find(
@@ -84,6 +85,65 @@ describe("OpenCode Go Provider Preset", () => {
     };
 
     expect(providerNeedsRouting("claude", provider)).toBe(false);
+  });
+});
+
+describe("Command Code Provider Presets", () => {
+  // 上游按 API 档建了一条 "Command Code"（/provider + openai_chat）；本发行版另加
+  // 一条 "Command Code Go" —— Go 档没有 API 接入，只能由本地路由模拟官方 CLI。
+  const apiPlan = providerPresets.find((p) => p.name === "Command Code");
+  const goPlan = providerPresets.find((p) => p.name === "Command Code Go");
+
+  const envOf = (preset: (typeof providerPresets)[number]) =>
+    (preset.settingsConfig as { env?: Record<string, string> }).env ?? {};
+
+  const asProvider = (
+    preset: (typeof providerPresets)[number],
+    id: string,
+  ): Provider => ({
+    id,
+    name: preset.name,
+    category: preset.category,
+    settingsConfig: preset.settingsConfig as Record<string, any>,
+    meta: { apiFormat: preset.apiFormat, apiKeyField: preset.apiKeyField },
+  });
+
+  it("keeps the upstream API plan on /provider without a manual edit", () => {
+    expect(envOf(apiPlan!).ANTHROPIC_BASE_URL).toBe(
+      "https://api.commandcode.ai/provider",
+    );
+    expect(apiPlan!.apiFormat).toBe("openai_chat");
+    expect(apiPlan!.endpointCandidates).toEqual([
+      "https://api.commandcode.ai/provider",
+    ]);
+  });
+
+  it("keeps the Go plan on the bare host so /alpha/generate is hit as-is", () => {
+    expect(envOf(goPlan!).ANTHROPIC_BASE_URL).toBe(
+      "https://api.commandcode.ai",
+    );
+    expect(goPlan!.apiFormat).toBe("commandcode");
+    expect(goPlan!.endpointCandidates).toEqual(["https://api.commandcode.ai"]);
+  });
+
+  it("routes both plans through the local proxy", () => {
+    expect(providerNeedsRouting("claude", asProvider(apiPlan!, "cc"))).toBe(
+      true,
+    );
+    expect(providerNeedsRouting("claude", asProvider(goPlan!, "cc-go"))).toBe(
+      true,
+    );
+  });
+
+  // 额度卡只认带 /provider 的 base（后端 detect_provider 同口径）；Go 档没有 API
+  // 接入，刻意不出卡，多一条反而会答 Unknown coding plan provider。
+  it("shows the quota card on the API plan only", () => {
+    expect(detectCodingPlanProvider(envOf(apiPlan!).ANTHROPIC_BASE_URL)).toBe(
+      "command_code",
+    );
+    expect(
+      detectCodingPlanProvider(envOf(goPlan!).ANTHROPIC_BASE_URL),
+    ).toBeNull();
   });
 });
 

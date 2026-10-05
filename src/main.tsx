@@ -4,11 +4,12 @@ import App from "./App";
 import { DatabaseUpgrade } from "./components/DatabaseUpgrade";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
-import { registerForkIcons } from "@/icons/forkIcons";
 // 导入国际化配置
 import i18n from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/theme-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { MotionConfig } from "framer-motion";
 import { queryClient } from "@/lib/query";
 import { Toaster } from "@/components/ui/sonner";
 import { listen } from "@tauri-apps/api/event";
@@ -25,6 +26,7 @@ import {
   syncModelsDevPricingOnStartup,
 } from "./lib/modelsDevAutoSync";
 import { initializeWindowActivity } from "@/lib/windowActivity";
+import { initializeInputModality } from "@/lib/inputModality";
 
 installGlobalErrorHandlers();
 
@@ -87,9 +89,6 @@ try {
 }
 
 async function bootstrap() {
-  // 本发行版自有图标：必须在首次渲染前注册（见 src/icons/forkIcons.ts）。
-  registerForkIcons();
-
   // 启动早期主动查询后端初始化错误，避免事件竞态
   try {
     const initError = (await invoke(
@@ -120,6 +119,7 @@ async function bootstrap() {
   }
 
   initializeWindowActivity();
+  initializeInputModality();
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -127,7 +127,13 @@ async function bootstrap() {
         <QueryClientProvider client={queryClient}>
           <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
             <UpdateProvider>
-              <App />
+              {/* 系统开了「减少动态效果」时，framer-motion 的位移动画一律跳过 */}
+              <MotionConfig reducedMotion="user">
+                {/* 全局悬停提示：移上去立即出现（HoverTip） */}
+                <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                  <App />
+                </TooltipProvider>
+              </MotionConfig>
               <Toaster />
             </UpdateProvider>
           </ThemeProvider>
