@@ -50,7 +50,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 同时覆盖 /zen/go 与 /zen/go/v1 两档 base；Zen 按量版（/zen/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
         Some(CodingPlanProvider::OpencodeGo)
-    } else if is_command_code_base(url) {
+    } else if is_command_code_base(&url) {
         Some(CodingPlanProvider::CommandCode)
     } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
         // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
