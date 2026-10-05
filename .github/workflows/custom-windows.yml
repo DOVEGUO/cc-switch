@@ -137,19 +137,28 @@ jobs:
         run: |
           $asset = Join-Path "artifacts" $env:MSI_NAME
           $notes = @"
-          Custom CC Switch based on official v$env:VERSION.
+          基于官方 v$env:VERSION 定制的 CC Switch。
 
-          - Two Command Code presets: Go (CLI bridge to /alpha/generate) and API (upstream's /provider/v1)
-          - Native Command Code /alpha/generate support for Claude Code
-          - Command Code Token Plan quota: 5h / weekly / monthly, read from the live API response
-            (windowLimits used/cap for 5h and weekly, credits + totalCost for monthly; no hardcoded caps)
-          - Reuses the provider API key; canonical api.commandcode.ai only
-          - Real streaming token usage accounting
-          - Official Command Code provider icon
-          - Yellow-star sponsored presets hidden from Add Provider
-          - UI app set reduced to Claude Code / Claude Desktop / Codex
-          - Windows x64 MSI only
-          - Keeps the official CC Switch product identity / UpgradeCode for in-place MSI upgrades
+          ## 上游 v4.0.0 界面重构
+
+          本次同步了上游 v4.0.0 / v4.0.1，界面换成侧边栏布局：应用切换，以及 MCP、
+          Skills、提示词、会话、授权中心、用量统计等全局功能，都改从侧边栏进入。新增
+          聚合模式，可以把多家供应商的模型并进同一个模型选择器；会话管理、应用页、
+          额度显示与托盘菜单也一并重做。从 3.20.x 升上来会明显看出差别。
+
+          ## 本发行版定制
+
+          - Command Code 两个预设：Go 档（1 美元/月，无 API 接入，由本地路由模拟官方
+            CLI 打 /alpha/generate）与 API 档（上游预设，走 /provider/v1）
+          - 两档的额度卡都可用：Go 档的裸域名与 API 档的 /provider 共用根域名下的
+            /alpha/* 控制面，5 小时 / 每周 / 每月三档都取上游返回的实时值，不写死上限
+          - 额度与 token 用量沿用官方采集器记账，没有另建统计
+          - 界面收敛到 Claude Code / Claude Desktop / Codex 三个应用；被隐藏应用的
+            后端代码照旧编译，已写入的配置照常保留、照常同步
+          - 「添加供应商」隐藏黄星赞助预设
+          - 仅发布 Windows x64 MSI；保持官方安装身份与 UpgradeCode，可直接覆盖安装
+
+          安装：下载下面的 MSI 运行即可覆盖现有安装。
 
           SHA-256:
           $env:MSI_SHA256
