@@ -127,6 +127,7 @@ fn make_error(msg: String) -> SubscriptionQuota {
         tiers: vec![],
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: Some(msg),
         queried_at: Some(now_millis()),
     }
@@ -160,6 +161,7 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            credits_balance: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -237,6 +239,7 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
         tiers,
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -383,6 +386,7 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota,
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            credits_balance: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -441,6 +445,7 @@ fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
         tiers,
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -483,6 +488,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            credits_balance: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -530,6 +536,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
         tiers,
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -563,6 +570,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            credits_balance: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -670,6 +678,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
         tiers,
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -825,6 +834,7 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            credits_balance: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -858,6 +868,7 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
         tiers,
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -938,6 +949,7 @@ fn command_code_auth_error() -> SubscriptionQuota {
         tiers: vec![],
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: Some("Authentication failed (HTTP 401 Unauthorized)".to_string()),
         queried_at: Some(now_millis()),
     }
@@ -1049,6 +1061,7 @@ fn parse_command_code_quota(
         tiers,
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -1530,6 +1543,7 @@ fn volcengine_success(tiers: Vec<QuotaTier>, plan: Option<String>) -> Subscripti
         tiers,
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -1544,6 +1558,7 @@ fn volcengine_auth_error(detail: String) -> SubscriptionQuota {
         tiers: vec![],
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: Some(detail),
         queried_at: Some(now_millis()),
     }
@@ -1636,6 +1651,7 @@ fn coding_plan_not_found(error: &str) -> SubscriptionQuota {
         tiers: vec![],
         extra_usage: None,
         reset_credits: None,
+        credits_balance: None,
         error: Some(error.to_string()),
         queried_at: None,
     }
@@ -1695,6 +1711,7 @@ async fn query_zhipu_team_at(
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            credits_balance: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });

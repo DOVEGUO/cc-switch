@@ -4,6 +4,10 @@
     "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"
   },
   "common": {
+    "unsavedLeaveTitle": "未保存の変更があります",
+    "unsavedLeaveMessage": "移動すると、この編集ページの変更は保存されません。",
+    "unsavedLeaveConfirm": "破棄して移動",
+    "unsavedLeaveCancel": "編集を続ける",
     "add": "追加",
     "edit": "編集",
     "delete": "削除",
@@ -1846,11 +1850,14 @@
   },
   "opencode": {
     "npmPackage": "API フォーマット",
+    "nativeConfigHint": "OpenCode V2 ネイティブ設定は下の JSON で編集します。保存時にプロバイダーとモデルのフィールドを保持します。",
     "selectPackage": "API フォーマットを選択",
     "npmPackageHint": "AI サービスの API フォーマットを選択",
     "builtinDefaults": "OpenCode 組み込みプロバイダーの既定値を使用",
     "customProviderRequired": "新しいプロバイダー ID には npm パッケージと少なくとも1つのモデルが必要です。設定に既に存在する同じ ID のプロバイダーのみ既定の定義を継承できます。",
     "duplicateRequiresDefinition": "npm パッケージまたはモデル定義が不足しているため、そのまま複製できません。npm パッケージと少なくとも1つのモデルを指定してから、カスタムプロバイダーとして複製してください。",
+    "duplicateRequiresNativeDefinition": "この V2 ネイティブプロバイダーには package またはモデル定義が不足しているため、そのまま複製できません。package と少なくとも1つのモデルを指定してから、新しい ID で複製してください。",
+    "nativeCustomProviderRequired": "新しいプロバイダー ID には package と少なくとも1つのモデルが必要です。設定に既に存在する同じ ID のプロバイダーのみ既定の定義を継承できます。",
     "baseUrl": "Base URL",
     "baseUrlHint": "カスタム API エンドポイント URL",
     "models": "モデル設定",
@@ -2019,6 +2026,11 @@
     "responseModel": "レスポンスモデル",
     "noData": "データなし",
     "unknownProvider": "不明なプロバイダー",
+    "sessionProvider": {
+      "short": "セッションログ",
+      "label": "{{app}} · セッションログ",
+      "hint": "ルーティングがオフの間はクライアントのセッションログから読み取るため、どのプロバイダーかは区別できません"
+    },
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
     "source": "ソース",
@@ -2604,7 +2616,7 @@
   "prompts": {
     "add": "プロンプトを追加",
     "addTitle": "プロンプトを追加 · {{appName}}",
-    "editTitle": "プロンプトを編集 · {{name}}",
+    "editTitle": "プロンプトを編集",
     "enabled": "有効",
     "enable": "有効にする",
     "loading": "読み込み中...",
@@ -2672,7 +2684,6 @@
     "copyContent": "本文をコピー",
     "copiedContent": "「{{name}}」の本文をコピーしました",
     "deleteBlocked": "有効なものは削除できません。先に無効にしてください",
-    "deleteBlockedReason": "有効なプロンプトは削除できません。先に無効にしてください。",
     "emptyTitle": "{{app}} のプロンプトはまだありません",
     "emptyTarget": "有効にしたものが {{path}} に書き込まれます。",
     "emptyFile": "{{path}} には CC Switch にまだない {{size}} の内容があります",
@@ -4147,6 +4158,12 @@
       "times": "{{count}} 回",
       "inTime": "{{time}}後",
       "showAll": "{{count}} 回分のリセットの期限を表示"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits 約 {{usd}}",
+      "usd": "約 {{usd}}",
+      "detail": "Credits 残高 {{balance}} · API 価格換算で約 {{usd}} · 上限に達した後にのみ消費"
     }
   },
   "appMatrix": {
@@ -4243,7 +4260,7 @@
     },
     "drawer": {
       "addTitle": "MCP を追加",
-      "editTitle": "MCP を編集 · {{id}}",
+      "editTitle": "MCP を編集",
       "templates": "テンプレートから始める",
       "paste": "設定を貼り付け",
       "pastePlaceholder": "JSON か TOML を貼り付け。mcpServers・Codex・OpenCode の書式を自動認識します",
@@ -4333,8 +4350,7 @@
       "tags": "タグ",
       "tagsPlaceholder": "カンマ区切り（例：docs, web）",
       "homepage": "ホームページ",
-      "docs": "ドキュメント",
-      "delete": "削除"
+      "docs": "ドキュメント"
     },
     "resync": "ここのスイッチで各アプリの設定を書き直す"
   },

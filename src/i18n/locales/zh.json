@@ -4,6 +4,10 @@
     "description": "Claude Code / Codex / Gemini CLI 全方位辅助工具"
   },
   "common": {
+    "unsavedLeaveTitle": "有未保存的修改",
+    "unsavedLeaveMessage": "离开后，当前编辑页里的修改不会保存。",
+    "unsavedLeaveConfirm": "放弃修改并离开",
+    "unsavedLeaveCancel": "继续编辑",
     "add": "添加",
     "edit": "编辑",
     "delete": "删除",
@@ -1846,11 +1850,14 @@
   },
   "opencode": {
     "npmPackage": "接口格式",
+    "nativeConfigHint": "请在下方以 JSON 编辑 OpenCode V2 原生配置。保存时保留供应商和模型字段。",
     "selectPackage": "选择接口格式",
     "npmPackageHint": "选择 AI 服务的 API 接口格式",
     "builtinDefaults": "使用 OpenCode 内置供应商默认值",
     "customProviderRequired": "新的供应商标识需要填写 npm 包和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
     "duplicateRequiresDefinition": "此供应商缺少 npm 包或模型定义，无法直接复制。请先补全 npm 包和至少一个模型，再复制为自定义供应商。",
+    "duplicateRequiresNativeDefinition": "此 V2 原生供应商缺少 package 或模型定义，无法直接复制。请先补全 package 和至少一个模型，再以新的标识复制。",
+    "nativeCustomProviderRequired": "新的供应商标识需要填写 package 和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
     "baseUrl": "Base URL",
     "baseUrlHint": "自定义 API 端点地址",
     "models": "模型配置",
@@ -2019,6 +2026,11 @@
     "responseModel": "返回模型",
     "noData": "暂无数据",
     "unknownProvider": "未知供应商",
+    "sessionProvider": {
+      "short": "会话日志",
+      "label": "{{app}} · 会话日志",
+      "hint": "没开路由时从客户端的会话日志读取，分不出具体是哪家供应商"
+    },
     "stream": "流",
     "nonStream": "非流",
     "source": "来源",
@@ -2604,7 +2616,7 @@
   "prompts": {
     "add": "添加提示词",
     "addTitle": "添加提示词 · {{appName}}",
-    "editTitle": "编辑提示词 · {{name}}",
+    "editTitle": "编辑提示词",
     "enabled": "已启用",
     "enable": "启用",
     "loading": "加载中...",
@@ -2672,7 +2684,6 @@
     "copyContent": "复制正文",
     "copiedContent": "已复制「{{name}}」的正文",
     "deleteBlocked": "启用中的不能删除，先停用",
-    "deleteBlockedReason": "启用中的不能删除，先停用。",
     "emptyTitle": "{{app}} 还没有提示词",
     "emptyTarget": "启用的那条会写进 {{path}}。",
     "emptyFile": "{{path}} 里已有 {{size}} 内容，还不在 CC Switch 里",
@@ -4147,6 +4158,12 @@
       "times": "{{count}} 次",
       "inTime": "{{time}}后",
       "showAll": "查看 {{count}} 次重置各自的到期时间"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits 约 {{usd}}",
+      "usd": "约 {{usd}}",
+      "detail": "Credits 余额 {{balance}} · 按 API 价折算约 {{usd}} · 额度用完后才扣"
     }
   },
   "appMatrix": {
@@ -4243,7 +4260,7 @@
     },
     "drawer": {
       "addTitle": "添加 MCP",
-      "editTitle": "编辑 MCP · {{id}}",
+      "editTitle": "编辑 MCP",
       "templates": "从模板开始",
       "paste": "粘贴配置",
       "pastePlaceholder": "粘贴 JSON 或 TOML，自动识别 mcpServers、Codex、OpenCode 的写法",
@@ -4333,8 +4350,7 @@
       "tags": "标签",
       "tagsPlaceholder": "用逗号分隔，例如 docs, web",
       "homepage": "主页",
-      "docs": "文档",
-      "delete": "删除"
+      "docs": "文档"
     },
     "resync": "按这里的开关重写各应用配置"
   },
