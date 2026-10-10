@@ -1,10 +1,10 @@
 name: Custom Windows MSI
 
+# 只在手动触发时运行。原先还监听 push 到 feat/commandcode，但每次 push 都会跑一次
+# 完整的 Windows MSI 构建（15-25 分钟），是这个 fork 的 Actions 用量大头——GitHub
+# 曾因此停掉本仓库的工作流。推送本身不需要出包，验证由下面这些步骤在发布时一并完成。
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feat/commandcode
 
 permissions:
   contents: write
