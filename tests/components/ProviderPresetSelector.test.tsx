@@ -228,11 +228,11 @@ describe("preset families", () => {
 
   // 本发行版多一条 "Command Code Go"（Go 档没有 API 接入，靠本地路由模拟 CLI），
   // 它没有 family，所以比上游多占一行。
-  it("merges Claude's visible presets into 75 rows", () => {
+  it("merges Claude's visible presets into 83 rows", () => {
     const claudeEntries = providerPresets
       .filter((item) => !item.hidden)
       .map((item, index) => ({ id: `claude-${index}`, preset: item }));
-    expect(groupPresetRows(claudeEntries)).toHaveLength(75);
+    expect(groupPresetRows(claudeEntries)).toHaveLength(83);
   });
 
   // DOVEGUO custom build: 黄星赞助预设（isPartner）不进「添加供应商」。两条路径都要
