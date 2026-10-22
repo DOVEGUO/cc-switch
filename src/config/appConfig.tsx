@@ -32,6 +32,8 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   hermes: false,
   pi: false,
   mcode: false,
+  kimi: false,
+  agy: false,
 };
 
 /** App IDs shown in Skills panels. */
@@ -79,7 +81,7 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [];
@@ -110,6 +112,10 @@ export const MCP_APP_IDS: McpAppId[] = ["claude", "codex"];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
   return (MCP_APP_IDS as string[]).includes(appId);
+}
+
+export function usesGeminiStyleForm(appId: string): boolean {
+  return appId === "gemini" || appId === "agy";
 }
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
@@ -198,6 +204,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
+  kimi: {
+    label: "Kimi Code",
+    icon: <ProviderIcon icon="kimi" name="Kimi Code" size={14} />,
+    activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
   mcode: {
     label: "MiniMax Code",
     icon: <ProviderIcon icon="minimax" name="MiniMax Code" size={14} />,
@@ -212,6 +225,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  agy: {
+    label: "Antigravity",
+    icon: (
+      <ProviderIcon
+        icon="antigravity"
+        name="Antigravity"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
+    badgeClass:
+      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
   },
 };
 
