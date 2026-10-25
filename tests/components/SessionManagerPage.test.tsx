@@ -340,6 +340,64 @@ describe("SessionManagerPage", () => {
     );
   });
 
+  // 回归：上游引入 kimi / agy / omp 时会把它们的 visibleApps 写成 true（旧配置缺键
+  // 也会走各自的默认值）。本发行版界面上没有这些应用的开关，会话页不能再把它们列出来。
+  it("ignores hidden apps that are still marked visible in settings", async () => {
+    setSessionFixtures([
+      {
+        providerId: "codex",
+        sessionId: "codex-session-1",
+        title: "Alpha Session",
+        summary: "Codex summary",
+        projectDir: "/mock/codex",
+        createdAt: Date.now() - 2000,
+        lastActiveAt: Date.now() - 1000,
+        sourcePath: "/mock/codex/session-1.jsonl",
+        resumeCommand: "codex resume codex-session-1",
+      },
+      {
+        providerId: "kimi",
+        sessionId: "kimi-session-1",
+        title: "Kimi Session",
+        summary: "Kimi summary",
+        projectDir: "/mock/kimi",
+        createdAt: Date.now() - 4000,
+        lastActiveAt: Date.now() - 3000,
+        sourcePath: "/mock/kimi/session-1.jsonl",
+      },
+      {
+        providerId: "agy",
+        sessionId: "agy-session-1",
+        title: "Agy Session",
+        summary: "Agy summary",
+        projectDir: "/mock/agy",
+        createdAt: Date.now() - 6000,
+        lastActiveAt: Date.now() - 5000,
+        sourcePath: "/mock/agy/session-1.jsonl",
+      },
+    ]);
+    setSettings({
+      visibleApps: {
+        ...DEFAULT_VISIBLE_APPS,
+        kimi: true,
+        agy: true,
+      },
+    });
+
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+
+    await openAppMenu();
+    const menu = await screen.findByRole("menu");
+    // 只有「全部应用」+ Codex（其余暴露的应用都没会话，仍会列出）
+    expect(within(menu).queryByText("Kimi Code")).not.toBeInTheDocument();
+    expect(within(menu).queryByText("Antigravity")).not.toBeInTheDocument();
+    // 隐藏应用的会话也不计入「全部应用」
+    expect(within(menu).getAllByRole("menuitemradio")[0]).toHaveTextContent(
+      "全部应用1",
+    );
+  });
+
   it("shows the Claude Desktop note when coming from Claude Desktop", async () => {
     renderPage("claude", { fromApp: "claude-desktop" });
     expect(

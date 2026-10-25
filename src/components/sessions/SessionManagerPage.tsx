@@ -24,7 +24,7 @@ import {
 } from "@/lib/query";
 import { piApi, sessionsApi, type AppId } from "@/lib/api";
 import type { SessionMeta } from "@/types";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import { APP_IDS, DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
@@ -193,14 +193,21 @@ export function SessionManagerPage({
     staleTime: 30 * 1000,
   });
 
-  // 下拉里只列「应用」页设为显示的应用；Claude Code 的会话在 Claude Desktop 显示时也算
+  // 下拉里只列本发行版露出的应用，且仍需在设置里设为显示；
+  // Claude Code 的会话在 Claude Desktop 显示时也算。
+  //
+  // 先按 APP_IDS 收窄再叠加 visibleApps 是必须的：上游引入 kimi / agy / omp 时会把
+  // 它们的 visibleApps 写成 true（或旧配置里缺键走默认 true），而侧边栏与「应用」页
+  // 的候选集来自 APP_IDS，界面上根本没有这些应用的开关。只按 visibleApps 过滤会让
+  // 会话页冒出一批在别处都看不到的应用。
   const availableApps = useMemo(() => {
     const visible = { ...DEFAULT_VISIBLE_APPS, ...settings?.visibleApps };
     return SESSION_APP_IDS.filter(
       (app) =>
-        visible[app] ||
-        (app === "claude" && visible["claude-desktop"]) ||
-        app === appFilter,
+        APP_IDS.includes(app) &&
+        (visible[app] ||
+          (app === "claude" && visible["claude-desktop"]) ||
+          app === appFilter),
     );
   }, [settings?.visibleApps, appFilter]);
 
